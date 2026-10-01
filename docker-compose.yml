@@ -49,7 +49,10 @@ services:
       EPSON_API_KEY: "${EPSON_API_KEY:-}"
       EPSON_CLIENT_ID: "${EPSON_CLIENT_ID:-}"
       EPSON_CLIENT_SECRET: "${EPSON_CLIENT_SECRET:-}"
-      EPSON_DEVICE_GRANT: "${EPSON_DEVICE_GRANT:-password}"
+      # Must byte-for-byte match the "Redirect URI" saved on the Epson app
+      # (tutorial §3). Leave blank to default to ${FRONTEND_URL}/epson/callback.
+      EPSON_REDIRECT_URI: "${EPSON_REDIRECT_URI:-}"
+      EPSON_DEVICE_GRANT: "${EPSON_DEVICE_GRANT:-refresh_token}"
       EPSON_DEVICE_EMAIL: "${EPSON_DEVICE_EMAIL:-}"
       EPSON_DEVICE_PASSWORD: "${EPSON_DEVICE_PASSWORD:-}"
       EPSON_DEVICE_REFRESH_TOKEN: "${EPSON_DEVICE_REFRESH_TOKEN:-}"

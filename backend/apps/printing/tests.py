@@ -1,5 +1,6 @@
 """Epson device-authorization tests. Network calls are mocked."""
 
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 from django.test import TestCase, override_settings
@@ -64,8 +65,10 @@ class EpsonDeviceFlowViewTests(TestCase):
         self.assertFalse(body["device_connected"])
         self.assertEqual(body["refresh_token_source"], "none")
 
+    @override_settings(FRONTEND_URL="https://print.example.com",
+                       EPSON_CLIENT_ID="cid", EPSON_CLIENT_SECRET="secret")
     def test_auth_url_stores_state_and_encodes_redirect(self):
-        with override_settings(FRONTEND_URL="https://print.example.com", EPSON_CLIENT_ID="cid"):
+        with patch("apps.printing.epson.EpsonClient.get_application_token", return_value="tok"):
             response = self.api.get("/api/admin/epson/auth-url/")
 
         self.assertEqual(response.status_code, 200, response.content)
@@ -78,10 +81,36 @@ class EpsonDeviceFlowViewTests(TestCase):
         self.assertEqual(query["state"], [body["state"]])
         self.assertEqual(EpsonCredential.load().pending_state, body["state"])
 
-    @override_settings()
-    def test_exchange_persists_refresh_token_and_clears_state(self):
-        from unittest.mock import patch
+    @override_settings(EPSON_REDIRECT_URI="https://registered.example.com/cb",
+                       EPSON_CLIENT_ID="cid", EPSON_CLIENT_SECRET="secret")
+    def test_registered_redirect_uri_overrides_the_default(self):
+        """Tutorial §4.1: the value sent must be the URI registered in §3."""
+        with patch("apps.printing.epson.EpsonClient.get_application_token", return_value="tok"):
+            response = self.api.get("/api/admin/epson/auth-url/")
 
+        body = response.json()
+        self.assertEqual(body["redirect_uri"], "https://registered.example.com/cb")
+        self.assertEqual(
+            parse_qs(urlparse(body["authorization_url"]).query)["redirect_uri"],
+            ["https://registered.example.com/cb"],
+        )
+
+    @override_settings(EPSON_CLIENT_ID="cid", EPSON_CLIENT_SECRET="secret")
+    def test_auth_url_reports_bad_credentials_instead_of_a_dead_link(self):
+        with patch("apps.printing.epson.EpsonClient.get_application_token",
+                   side_effect=EpsonError("Application token request failed (401): invalid_client")):
+            response = self.api.get("/api/admin/epson/auth-url/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("regenerate", response.json()["detail"].lower())
+
+    def test_auth_url_requires_configured_credentials(self):
+        with override_settings(EPSON_CLIENT_ID="", EPSON_CLIENT_SECRET=""):
+            response = self.api.get("/api/admin/epson/auth-url/")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_exchange_persists_refresh_token_and_clears_state(self):
         cred = EpsonCredential.load()
         cred.pending_state = "state-123"
         cred.save()
@@ -99,8 +128,6 @@ class EpsonDeviceFlowViewTests(TestCase):
         self.assertNotIn("rotated-refresh", response.content.decode())
 
     def test_exchange_rejects_state_mismatch(self):
-        from unittest.mock import patch
-
         cred = EpsonCredential.load()
         cred.pending_state = "expected"
         cred.save()

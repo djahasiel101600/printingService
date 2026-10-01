@@ -77,7 +77,15 @@ class EpsonClient:
     # ------------------------------------------------------------------ auth
     @property
     def redirect_uri(self) -> str:
-        """OAuth redirect target; must match the app registration's allowed URI."""
+        """OAuth redirect target.
+
+        Per tutorial §3 the "Redirect URI" is registered on the Epson app, and
+        §4.1 says the value passed here must be that registered URI — so
+        ``EPSON_REDIRECT_URI`` takes precedence over the derived default.
+        """
+        configured = (getattr(settings, "EPSON_REDIRECT_URI", "") or "").strip()
+        if configured:
+            return configured
         return f"{settings.FRONTEND_URL.rstrip('/')}/epson/callback"
 
     def get_authorization_url(self, state: str = "") -> str:
@@ -109,6 +117,9 @@ class EpsonClient:
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": self.redirect_uri,
+                # Tutorial §4.1 puts client_id in the body; HTTP Basic is also
+                # accepted by Epson, so send both.
+                "client_id": settings.EPSON_CLIENT_ID,
             },
             auth=(settings.EPSON_CLIENT_ID, settings.EPSON_CLIENT_SECRET),
             headers={"x-api-key": settings.EPSON_API_KEY} if settings.EPSON_API_KEY else {},
@@ -204,12 +215,12 @@ class EpsonClient:
             cache.set(f"{TOKEN_CACHE_KEY}:refresh", payload["refresh_token"], timeout=60 * 60 * 24 * 29)
         return token
 
-    def get_application_token(self) -> str:
+    def get_application_token(self, force_refresh: bool = False) -> str:
         """Application token via the client-credentials grant (non-device APIs)."""
         if self.mock_mode:
             return "mock-application-token"
         cached = cache.get(APP_TOKEN_CACHE_KEY)
-        if cached:
+        if cached and not force_refresh:
             return cached
         response = self.session.post(
             f"{self.auth_base}/auth/token",

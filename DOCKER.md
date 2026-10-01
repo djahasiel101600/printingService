@@ -196,6 +196,10 @@ app. To print for real:
    the jobs, then connect it from the app: **Admin → API Settings → Epson device
    authorization → Get authorization URL → Open Epson sign-in**.
 
+   Before handing you a link, that button pre-flights the app credentials
+   against Epson's token endpoint — if they are wrong or rotated you get an
+   explanatory error instead of a browser dropped on Epson's `error400` page.
+
    Epson Connect API v2 has **no password grant** — the device token can only be
    minted through this authorization-code flow, so `EPSON_DEVICE_GRANT=password`
    always fails with `unsupported_grant_type`.
@@ -206,9 +210,9 @@ app. To print for real:
 
 3. Confirm with **Test Epson Connection** — all four checks should pass.
 
-> The `redirect_uri` is `$FRONTEND_URL/epson/callback`. Make sure
-> `FRONTEND_URL` matches the hostname the tunnel serves, or Epson will return
-> the admin to the wrong origin.
+> The `redirect_uri` is `$FRONTEND_URL/epson/callback` unless you set
+> `EPSON_REDIRECT_URI`. It must **byte-for-byte match** the "Redirect URI" saved
+> on the Epson app, otherwise Epson answers `invalid_client`.
 
 ---
 

@@ -69,10 +69,26 @@ class EpsonAuthUrlView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     def get(self, request):
-        if not settings.EPSON_CLIENT_ID:
-            return Response({"detail": "EPSON_CLIENT_ID is not configured."}, status=400)
+        if not settings.EPSON_CLIENT_ID or not settings.EPSON_CLIENT_SECRET:
+            return Response(
+                {"detail": "EPSON_CLIENT_ID / EPSON_CLIENT_SECRET are not configured."}, status=400)
+
         # Always talk to the real auth server here, even while mock mode is on.
         client = EpsonClient(mock_mode=False)
+
+        # Pre-flight: /auth/authorize answers `invalid_client` when the app
+        # credentials are wrong or rotated, dumping the admin on a bare Epson
+        # error page. Catch it here so the UI can explain it instead.
+        try:
+            client.get_application_token(force_refresh=True)
+        except EpsonError as exc:
+            return Response({"detail": (
+                "Epson rejected these app credentials, so the sign-in link would fail "
+                f"({exc}). Open the Epson developer portal -> My Apps, regenerate the "
+                "API Key / Client ID / Client Secret, update .env, then recreate the "
+                "backend container."
+            )}, status=400)
+
         state = secrets.token_urlsafe(24)
         cred = EpsonCredential.load()
         cred.pending_state = state
@@ -130,7 +146,7 @@ class EpsonTestConnectionView(APIView):
 
         # Test 1: Application token
         try:
-            app_token = client.get_application_token()
+            app_token = client.get_application_token(force_refresh=True)
             result["tests"]["application_token"] = {"status": "success", "token_prefix": app_token[:20] + "..." if len(app_token) > 20 else app_token}
         except Exception as exc:
             result["tests"]["application_token"] = {"status": "failed", "error": str(exc)[:200]}

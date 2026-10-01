@@ -168,6 +168,9 @@ EPSON_AUTH_BASE = os.getenv("EPSON_AUTH_BASE", "https://auth.epsonconnect.com")
 EPSON_API_KEY = os.getenv("EPSON_API_KEY", "")
 EPSON_CLIENT_ID = os.getenv("EPSON_CLIENT_ID", "")
 EPSON_CLIENT_SECRET = os.getenv("EPSON_CLIENT_SECRET", "")
+# Must byte-for-byte match the "Redirect URI" saved in the Epson app
+# (tutorial §3). Defaults to <FRONTEND_URL>/epson/callback.
+EPSON_REDIRECT_URI = os.getenv("EPSON_REDIRECT_URI", "")
 EPSON_DEVICE_GRANT = os.getenv("EPSON_DEVICE_GRANT", "password")
 EPSON_DEVICE_EMAIL = os.getenv("EPSON_DEVICE_EMAIL", "")
 EPSON_DEVICE_PASSWORD = os.getenv("EPSON_DEVICE_PASSWORD", "")

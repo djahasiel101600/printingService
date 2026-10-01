@@ -310,13 +310,27 @@ To use a real Epson printer, disable mock mode and connect the device.
 
 1. Sign in at the [Epson Connect API developer portal](https://developer.epsonconnect.com/)
 2. Go to **My Apps → Create a New App**
-3. Copy the **Client ID**, **Client Secret** and **API Key** shown for that app
+3. Fill in the three fields the portal asks for:
 
-| Portal value | `.env` variable |
-|--------------|-----------------|
-| Client ID | `EPSON_CLIENT_ID` |
-| Client Secret | `EPSON_CLIENT_SECRET` |
-| API Key | `EPSON_API_KEY` |
+   | Portal field | What to enter |
+   |--------------|---------------|
+   | Application Name | any name, e.g. `PrintEasy` |
+   | Application Overview | a short description of how the app uses the API |
+   | **Redirect URI** | the **exact** URL Epson should return the admin to, e.g. `https://print.jdp-homelab.space/epson/callback` |
+
+4. Copy the credentials the app page shows:
+
+   | Portal value | `.env` variable |
+   |--------------|-----------------|
+   | Client ID | `EPSON_CLIENT_ID` |
+   | Client Secret | `EPSON_CLIENT_SECRET` |
+   | API Key | `EPSON_API_KEY` |
+
+> ⚠️ The **Redirect URI** is the usual cause of `invalid_client`. Epson only
+> accepts the exact URI saved here, so set `EPSON_REDIRECT_URI` to that same
+> value — it defaults to `<FRONTEND_URL>/epson/callback` when left blank. Also
+> make sure `EPSON_CLIENT_SECRET` is copied in full (it is long and easy to
+> truncate).
 
 ### Step 2: Register the printer
 
@@ -357,6 +371,21 @@ fails with `unsupported_grant_type`.
 3. Sign in as the Epson account from Step 2
 4. Epson redirects to `/epson/callback`, which shows the code — click
    **Complete connection** (or paste the code back into API Settings)
+
+The app builds the exact URL from the tutorial (§4.1):
+
+```
+https://auth.epsonconnect.com/auth/authorize?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope=device
+```
+
+and exchanges the code with
+`grant_type=authorization_code&code=…&redirect_uri=…&client_id=…`.
+
+**Get authorization URL runs a pre-flight check first.** If the app credentials
+are wrong or have been rotated, Epson's authorize endpoint answers
+`invalid_client` and drops the browser on a bare `error400` page; the pre-flight
+catches that and tells you to regenerate the credentials instead of handing out
+a dead link.
 
 The refresh token is stored in the database (`EpsonCredential`) and renews
 itself, so nothing has to be copied into `.env`. Epson rotates the refresh token
