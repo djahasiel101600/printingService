@@ -149,6 +149,20 @@ export interface SetupStatus {
   needs_setup: boolean;
 }
 
+export interface EpsonStatus {
+  mock_mode: boolean;
+  client_configured: boolean;
+  redirect_uri: string;
+  device_connected: boolean;
+  refresh_token_source: "database" | "environment" | "none";
+}
+
+export interface EpsonAuthUrl {
+  authorization_url: string;
+  redirect_uri: string;
+  state: string;
+}
+
 export interface PriceRule {
   id: number;
   media_size: string;

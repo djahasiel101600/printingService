@@ -304,20 +304,28 @@ Output goes to `frontend/dist/`.
 
 ## 8. Epson Connect API Setup (Optional)
 
-To use a real Epson printer, disable mock mode and configure credentials.
+To use a real Epson printer, disable mock mode and connect the device.
 
-### Step 1: Register for Epson Developer Access
+### Step 1: Create an application in the Epson developer portal
 
-1. Visit [Epson Developer Portal](https://developer.epson.com/)
-2. Create an application to get API credentials
-3. Note your `Client ID` and `Client Secret`
+1. Sign in at the [Epson Connect API developer portal](https://developer.epsonconnect.com/)
+2. Go to **My Apps → Create a New App**
+3. Copy the **Client ID**, **Client Secret** and **API Key** shown for that app
 
-### Step 2: Get Printer Authorization
+| Portal value | `.env` variable |
+|--------------|-----------------|
+| Client ID | `EPSON_CLIENT_ID` |
+| Client Secret | `EPSON_CLIENT_SECRET` |
+| API Key | `EPSON_API_KEY` |
 
-The printer must be registered to an Epson Connect account. You'll need:
+### Step 2: Register the printer
 
-- Printer registered to an Epson account
-- Email/password used for printer registration
+Register the printer to Epson Connect with the Epson account that will own the
+print jobs ([how to register a device](https://www.epsonconnect.com/guide/en/html/p01.htm)).
+Check [compatible models](https://developer.epsonconnect.com/portals/compatibleModels) first.
+
+That account's `…@print.epsonconnect.com` address is the printer's **Email-Print**
+address — it is *not* an API login, and no password is involved anywhere.
 
 ### Step 3: Configure Environment
 
@@ -332,42 +340,44 @@ EPSON_API_BASE=https://api.epsonconnect.com/api/2
 EPSON_UPLOAD_BASE=https://upload.epsonconnect.com
 EPSON_AUTH_BASE=https://auth.epsonconnect.com
 
-# Your app credentials
-EPSON_API_KEY=your-api-key-here
+# App credentials from Step 1
+EPSON_API_KEY=your-api-key
 EPSON_CLIENT_ID=your-client-id
 EPSON_CLIENT_SECRET=your-client-secret
-
-# Device authorization method
-EPSON_DEVICE_GRANT=password
-EPSON_DEVICE_EMAIL=printer@email.com
-EPSON_DEVICE_PASSWORD=printer-password
-EPSON_PRINTER_NAME=Shop Printer
 ```
+
+### Step 4: Connect the printer (device authorization)
+
+Epson Connect API v2 issues **device tokens only through the authorization-code
+flow** — there is no password grant, so `EPSON_DEVICE_GRANT=password` always
+fails with `unsupported_grant_type`.
+
+1. Open **Admin → API Settings → Epson device authorization**
+2. Click **Get authorization URL**, then **Open Epson sign-in**
+3. Sign in as the Epson account from Step 2
+4. Epson redirects to `/epson/callback`, which shows the code — click
+   **Complete connection** (or paste the code back into API Settings)
+
+The refresh token is stored in the database (`EpsonCredential`) and renews
+itself, so nothing has to be copied into `.env`. Epson rotates the refresh token
+on every use, which is precisely why the app persists it instead of re-reading
+the environment.
 
 ### Device Grant Types
 
-| Method | Required Variables | Use Case |
-|--------|-------------------|----------|
-| `password` | `EPSON_DEVICE_EMAIL`, `EPSON_DEVICE_PASSWORD` | Direct printer credentials |
-| `refresh_token` | `EPSON_DEVICE_REFRESH_TOKEN` | Reuse existing token |
-| `authorization_code` | `EPSON_AUTH_CODE` | OAuth code flow |
+| Method | Behaviour |
+|--------|-----------|
+| *(default)* | Reuse the token captured by the UI flow above |
+| `refresh_token` | Fall back to `EPSON_DEVICE_REFRESH_TOKEN` from the environment |
+| `authorization_code` | One-off exchange of `EPSON_AUTH_CODE` |
+| `password` | ❌ Not supported by Epson Connect API v2 |
 
-### Important: Authorization Code Flow
+### Verifying the connection
 
-Epson Connect API v2 does NOT support the `password` grant type for device tokens. You must use the **authorization code flow**:
-
-1. Generate the authorization URL:
-   ```
-   GET /api/admin/epson/auth-url/
-   ```
-2. Open the URL in a browser and log in with your Epson account
-3. Epson redirects back with a `code` parameter
-4. Exchange the code for tokens:
-   ```
-   POST /api/admin/epson/exchange-code/
-   Body: { "code": "your-auth-code" }
-   ```
-5. Save the `refresh_token` to your `.env` as `EPSON_DEVICE_REFRESH_TOKEN`
+Use **Test Epson Connection** in Admin → API Settings. A working setup reports
+`application_token`, `device_token`, `device_info` and `capabilities` as success.
+You can also point `EPSON_API_BASE` at `https://dummy-api.epsonconnect.com/api/2`
+(the spec's demo server) to validate credentials without a real printer.
 
 ### Mock Mode Behavior
 

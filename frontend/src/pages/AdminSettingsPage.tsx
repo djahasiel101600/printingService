@@ -1,14 +1,26 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { api, apiErrorMessage } from "@/lib/api";
+import type { EpsonAuthUrl, EpsonStatus } from "@/lib/types";
 
 interface TestResult {
   mock_mode?: boolean;
@@ -25,6 +37,37 @@ function StatusIcon({ status }: { status: string }) {
 export default function AdminSettingsPage() {
   const [epsonMockMode, setEpsonMockMode] = useState(true);
   const [paymongoMockMode, setPaymongoMockMode] = useState(true);
+  const [code, setCode] = useState("");
+  const queryClient = useQueryClient();
+
+  const { data: epsonStatus } = useQuery({
+    queryKey: ["epson-status"],
+    queryFn: async () => (await api.get<EpsonStatus>("/admin/epson/status/")).data,
+  });
+
+  const authUrlMutation = useMutation({
+    mutationFn: async () => (await api.get<EpsonAuthUrl>("/admin/epson/auth-url/")).data,
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  const exchangeMutation = useMutation({
+    mutationFn: async () =>
+      (await api.post<{ detail: string }>("/admin/epson/exchange-code/", {
+        code,
+        state: authUrlMutation.data?.state ?? "",
+      })).data,
+    onSuccess: (data) => {
+      toast.success(data.detail);
+      setCode("");
+      queryClient.invalidateQueries({ queryKey: ["epson-status"] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  function copy(text: string) {
+    navigator.clipboard.writeText(text);
+    toast.success("Copied to clipboard");
+  }
 
   const epsonTestMutation = useMutation({
     mutationFn: async () => {
@@ -94,6 +137,105 @@ export default function AdminSettingsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5" />
+            Epson device authorization
+          </CardTitle>
+          <CardDescription>
+            Epson Connect v2 has no password login. The printer is connected once via an
+            authorization code; the refresh token then renews automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2 text-sm">
+            <StatusIcon status={epsonStatus?.device_connected ? "success" : "failed"} />
+            {epsonStatus?.device_connected ? (
+              <>
+                Connected
+                <span className="text-muted-foreground">
+                  (refresh token from: {epsonStatus.refresh_token_source})
+                </span>
+              </>
+            ) : (
+              "Not connected — real printing fails until this is completed."
+            )}
+          </div>
+          {epsonStatus && (
+            <p className="text-xs text-muted-foreground">
+              Redirect URI:{" "}
+              <code className="rounded bg-muted px-1 py-0.5">{epsonStatus.redirect_uri}</code> — it must be
+              reachable on the hostname the tunnel serves.
+            </p>
+          )}
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label>Step 1 — sign in to Epson as the printer's account</Label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => authUrlMutation.mutate()}
+                disabled={authUrlMutation.isPending}
+              >
+                {authUrlMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <KeyRound className="mr-2 h-4 w-4" />
+                )}
+                Get authorization URL
+              </Button>
+              {authUrlMutation.data && (
+                <Button asChild>
+                  <a href={authUrlMutation.data.authorization_url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Open Epson sign-in
+                  </a>
+                </Button>
+              )}
+            </div>
+            {authUrlMutation.data && (
+              <div className="flex items-center gap-2">
+                <Input readOnly value={authUrlMutation.data.authorization_url} className="text-xs" />
+                <Button variant="ghost" size="sm" onClick={() => copy(authUrlMutation.data!.authorization_url)}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label htmlFor="epson-code">Step 2 — paste the code Epson returned</Label>
+            <div className="flex gap-2">
+              <Input
+                id="epson-code"
+                placeholder="Code from the callback URL"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+              <Button
+                onClick={() => exchangeMutation.mutate()}
+                disabled={!code || exchangeMutation.isPending}
+              >
+                {exchangeMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                )}
+                Connect device
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              After signing in, Epson redirects to the callback page, which shows the code.
+            </p>
+          </div>
         </CardContent>
       </Card>
 

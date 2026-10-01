@@ -75,15 +75,27 @@ class EpsonClient:
         self.session = requests.Session()
 
     # ------------------------------------------------------------------ auth
-    def get_authorization_url(self) -> str:
-        """Build the Epson OAuth authorization URL for the device authorization code flow.
-        The user opens this URL, logs in, and Epson redirects back with a code."""
+    @property
+    def redirect_uri(self) -> str:
+        """OAuth redirect target; must match the app registration's allowed URI."""
+        return f"{settings.FRONTEND_URL.rstrip('/')}/epson/callback"
+
+    def get_authorization_url(self, state: str = "") -> str:
+        """Build the Epson OAuth authorization URL for the device authorization
+        code flow. The user opens this URL, signs in with the Epson account that
+        owns the printer, and Epson redirects back with a ``code``.
+
+        NOTE: Epson Connect API v2 has no password grant — the device token can
+        only be obtained this way (see openapi.spec ``components.securitySchemes``).
+        """
         params = {
             "response_type": "code",
             "client_id": settings.EPSON_CLIENT_ID,
-            "redirect_uri": f"{settings.FRONTEND_URL}/epson/callback",
+            "redirect_uri": self.redirect_uri,
             "scope": "device",
         }
+        if state:
+            params["state"] = state
         query = "&".join(f"{k}={requests.utils.quote(v)}" for k, v in params.items())
         return f"{self.auth_base}/auth/authorize?{query}"
 
@@ -96,7 +108,7 @@ class EpsonClient:
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": f"{settings.FRONTEND_URL}/epson/callback",
+                "redirect_uri": self.redirect_uri,
             },
             auth=(settings.EPSON_CLIENT_ID, settings.EPSON_CLIENT_SECRET),
             headers={"x-api-key": settings.EPSON_API_KEY} if settings.EPSON_API_KEY else {},
@@ -106,22 +118,51 @@ class EpsonClient:
             raise EpsonError(f"Code exchange failed ({response.status_code}): {response.text[:300]}")
         return response.json()
 
+    # -------------------------------------------------- device-token storage
+    def stored_refresh_token(self) -> str:
+        """Refresh token captured by the authorization-code flow (may be empty)."""
+        from .models import EpsonCredential
+
+        try:
+            return EpsonCredential.load().refresh_token or ""
+        except Exception:  # noqa: BLE001 - DB may be unmigrated during setup
+            log.warning("Could not read the stored Epson refresh token", exc_info=True)
+            return ""
+
+    def save_refresh_token(self, refresh_token: str) -> None:
+        """Persist the (rotating) refresh token so restarts keep working."""
+        from .models import EpsonCredential
+
+        cred = EpsonCredential.load()
+        cred.refresh_token = refresh_token
+        cred.save(update_fields=["refresh_token", "updated_at"])
+
     def _token_payload(self) -> dict:
         """Build the token request payload based on available credentials."""
         grant = settings.EPSON_DEVICE_GRANT
-        if grant == "refresh_token" and settings.EPSON_DEVICE_REFRESH_TOKEN:
-            return {"grant_type": "refresh_token", "refresh_token": settings.EPSON_DEVICE_REFRESH_TOKEN}
+
+        # Explicit one-off: exchange an authorization code supplied via env.
         if grant == "authorization_code" and settings.EPSON_AUTH_CODE:
             return {
                 "grant_type": "authorization_code",
                 "code": settings.EPSON_AUTH_CODE,
-                "redirect_uri": f"{settings.FRONTEND_URL}/epson/callback",
+                "redirect_uri": self.redirect_uri,
             }
-        # Default: the printer's registered device email + password
+
+        # Normal operation: redeem the device refresh token. A token captured by
+        # the authorization-code flow wins over the env value because Epson
+        # issues a fresh refresh token every time one is redeemed.
+        refresh = self.stored_refresh_token() or settings.EPSON_DEVICE_REFRESH_TOKEN
+        if refresh:
+            return {"grant_type": "refresh_token", "refresh_token": refresh}
+
+        # Legacy fallback. Epson Connect API v2 does not implement the
+        # resource-owner password grant, so this can only ever be answered with
+        # "unsupported_grant_type" — complete the authorization-code flow instead.
         if not settings.EPSON_DEVICE_EMAIL:
             raise EpsonError(
-                "Epson device credentials missing. Configure EPSON_DEVICE_EMAIL/"
-                "EPSON_DEVICE_PASSWORD or set EPSON_MOCK_MODE=True."
+                "Epson device not connected. Open Admin -> API Settings and run "
+                "the device authorization flow, or set EPSON_MOCK_MODE=True."
             )
         return {
             "grant_type": "password",
@@ -152,9 +193,14 @@ class EpsonClient:
         if not token:
             raise EpsonError("Device token response missing access_token")
         expires_in = int(payload.get("expires_in", 3600))
-        # Refresh 5 minutes before expiry; rotated refresh tokens are cached.
         cache.set(TOKEN_CACHE_KEY, token, timeout=max(60, expires_in - 300))
         if payload.get("refresh_token"):
+            # Epson rotates the refresh token on every redemption; persist it so a
+            # restart never falls back to a stale value in the environment.
+            try:
+                self.save_refresh_token(payload["refresh_token"])
+            except Exception:  # noqa: BLE001 - never lose a working token over this
+                log.warning("Could not persist the rotated Epson refresh token", exc_info=True)
             cache.set(f"{TOKEN_CACHE_KEY}:refresh", payload["refresh_token"], timeout=60 * 60 * 24 * 29)
         return token
 

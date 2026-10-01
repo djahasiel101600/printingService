@@ -171,6 +171,47 @@ docker compose ps        # STATES should show "healthy"
 
 ---
 
+## Connecting the Epson printer
+
+`EPSON_MOCK_MODE=True` simulates printing, so nothing else is needed to try the
+app. To print for real:
+
+1. Put your **application** credentials in `.env` (create the app at the
+   [Epson developer portal](https://developer.epsonconnect.com/) → *My Apps*):
+
+   ```env
+   EPSON_MOCK_MODE=False
+   EPSON_API_KEY=<api key>
+   EPSON_CLIENT_ID=<client id>
+   EPSON_CLIENT_SECRET=<client secret>
+   ```
+
+   then recreate the backend so the new env is picked up:
+
+   ```bash
+   docker compose up -d --force-recreate printservice-backend
+   ```
+
+2. Register the printer to Epson Connect with the Epson account that will own
+   the jobs, then connect it from the app: **Admin → API Settings → Epson device
+   authorization → Get authorization URL → Open Epson sign-in**.
+
+   Epson Connect API v2 has **no password grant** — the device token can only be
+   minted through this authorization-code flow, so `EPSON_DEVICE_GRANT=password`
+   always fails with `unsupported_grant_type`.
+
+   The resulting refresh token is stored in the database and renews itself, so
+   it does **not** need to be copied into `.env`. It lives in the
+   `printservice-data` volume, so it survives rebuilds and restarts.
+
+3. Confirm with **Test Epson Connection** — all four checks should pass.
+
+> The `redirect_uri` is `$FRONTEND_URL/epson/callback`. Make sure
+> `FRONTEND_URL` matches the hostname the tunnel serves, or Epson will return
+> the admin to the wrong origin.
+
+---
+
 ## Files
 
 | File | Purpose |

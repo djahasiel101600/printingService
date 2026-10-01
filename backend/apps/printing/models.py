@@ -37,3 +37,32 @@ class PrintJob(models.Model):
 
     def __str__(self) -> str:
         return f"PrintJob {self.epson_job_id or '?'} for {self.order.tracking_id}"
+
+
+class EpsonCredential(models.Model):
+    """Singleton holding the rotating Epson OAuth device refresh token.
+
+    Epson issues a brand-new refresh token every time one is redeemed, so the
+    value pasted into the environment goes stale after the first refresh. The
+    live token is persisted here instead — it survives restarts and is shared by
+    every gunicorn worker, which is what makes unattended printing keep working.
+    """
+
+    refresh_token = models.TextField(blank=True)
+    # Anti-CSRF value for the in-flight authorization-code flow (PRD §7.1 setup).
+    pending_state = models.CharField(max_length=128, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Epson credential"
+        verbose_name_plural = "Epson credential"
+
+    def __str__(self) -> str:
+        state = "connected" if self.refresh_token else "not connected"
+        return f"Epson device credential ({state})"
+
+    @classmethod
+    def load(cls) -> "EpsonCredential":
+        """Fetch (or create) the single credential row."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

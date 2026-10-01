@@ -1,3 +1,6 @@
+import secrets
+
+from django.conf import settings
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -5,6 +8,7 @@ from rest_framework.views import APIView
 from apps.pricing.views import IsShopAdmin
 
 from .epson import EpsonClient, EpsonError
+from .models import EpsonCredential
 from .serializers import PrintJobSerializer
 from .services import sync_print_jobs
 
@@ -41,40 +45,77 @@ class DeviceInfoView(APIView):
             return Response({"detail": f"Printer unavailable: {exc}"}, status=503)
 
 
-class EpsonAuthUrlView(APIView):
-    """Get the Epson OAuth authorization URL for device setup."""
+class EpsonStatusView(APIView):
+    """Report whether a real Epson device token is configured (drives the UI)."""
 
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     def get(self, request):
-        client = EpsonClient()
-        try:
-            url = client.get_authorization_url()
-            return Response({"authorization_url": url})
-        except Exception as exc:
-            return Response({"detail": str(exc)}, status=400)
+        client = EpsonClient(mock_mode=False)
+        stored = client.stored_refresh_token()
+        return Response({
+            "mock_mode": settings.EPSON_MOCK_MODE,
+            "client_configured": bool(settings.EPSON_CLIENT_ID and settings.EPSON_CLIENT_SECRET),
+            "redirect_uri": client.redirect_uri,
+            "device_connected": bool(stored or settings.EPSON_DEVICE_REFRESH_TOKEN),
+            "refresh_token_source": "database" if stored else ("environment" if settings.EPSON_DEVICE_REFRESH_TOKEN else "none"),
+        })
+
+
+class EpsonAuthUrlView(APIView):
+    """Start the device authorization-code flow (the only way to get a device
+    token — Epson Connect API v2 has no password grant)."""
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def get(self, request):
+        if not settings.EPSON_CLIENT_ID:
+            return Response({"detail": "EPSON_CLIENT_ID is not configured."}, status=400)
+        # Always talk to the real auth server here, even while mock mode is on.
+        client = EpsonClient(mock_mode=False)
+        state = secrets.token_urlsafe(24)
+        cred = EpsonCredential.load()
+        cred.pending_state = state
+        cred.save(update_fields=["pending_state", "updated_at"])
+        return Response({
+            "authorization_url": client.get_authorization_url(state=state),
+            "redirect_uri": client.redirect_uri,
+            "state": state,
+        })
 
 
 class EpsonExchangeCodeView(APIView):
-    """Exchange an authorization code for access + refresh tokens."""
+    """Exchange the authorization code and persist the device refresh token."""
 
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     def post(self, request):
-        code = request.data.get("code", "").strip()
+        code = (request.data.get("code") or "").strip()
+        state = (request.data.get("state") or "").strip()
         if not code:
             return Response({"detail": "Authorization code is required."}, status=400)
-        client = EpsonClient()
+
+        cred = EpsonCredential.load()
+        if cred.pending_state and state and state != cred.pending_state:
+            return Response({"detail": "Authorization state mismatch. Restart the flow."}, status=400)
+
+        client = EpsonClient(mock_mode=False)
         try:
             tokens = client.exchange_code(code)
-            return Response({
-                "detail": "Authorization successful!",
-                "access_token": tokens.get("access_token", ""),
-                "refresh_token": tokens.get("refresh_token", ""),
-                "expires_in": tokens.get("expires_in", 0),
-            })
         except EpsonError as exc:
             return Response({"detail": str(exc)}, status=400)
+
+        refresh = tokens.get("refresh_token")
+        if not refresh:
+            return Response({"detail": "Epson did not return a refresh token."}, status=400)
+
+        client.save_refresh_token(refresh)
+        cred.pending_state = ""
+        cred.save(update_fields=["pending_state", "updated_at"])
+        return Response({
+            "detail": "Epson device connected. The refresh token is stored and renews automatically.",
+            "refresh_token_preview": f"{refresh[:6]}…{refresh[-4:]}",
+        })
 
 
 class EpsonTestConnectionView(APIView):
