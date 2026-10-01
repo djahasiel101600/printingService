@@ -326,9 +326,11 @@ To use a real Epson printer, disable mock mode and connect the device.
    | Client Secret | `EPSON_CLIENT_SECRET` |
    | API Key | `EPSON_API_KEY` |
 
-> ⚠️ The **Redirect URI** is the usual cause of `invalid_client`. Epson only
-> accepts the exact URI saved here, so set `EPSON_REDIRECT_URI` to that same
-> value — it defaults to `<FRONTEND_URL>/epson/callback` when left blank. Also
+> ⚠️ The **Redirect URI** is the usual cause of failures. If the `redirect_uri`
+> sent by the app is not the exact URI saved on the Epson app, the sign-in page
+> answers `invalid_request` / `Forbidden`, and the token exchange answers
+> `invalid_client`. Set `EPSON_REDIRECT_URI` to that same registered value —
+> it defaults to `<FRONTEND_URL>/epson/callback` when left blank. Also
 > make sure `EPSON_CLIENT_SECRET` is copied in full (it is long and easy to
 > truncate).
 
@@ -358,6 +360,8 @@ EPSON_AUTH_BASE=https://auth.epsonconnect.com
 EPSON_API_KEY=your-api-key
 EPSON_CLIENT_ID=your-client-id
 EPSON_CLIENT_SECRET=your-client-secret
+# Exact callback URL registered as "Redirect URI" on the Epson app
+EPSON_REDIRECT_URI=https://print.jdp-homelab.space/epson/callback
 ```
 
 ### Step 4: Connect the printer (device authorization)
@@ -399,7 +403,7 @@ the environment.
 | *(default)* | Reuse the token captured by the UI flow above |
 | `refresh_token` | Fall back to `EPSON_DEVICE_REFRESH_TOKEN` from the environment |
 | `authorization_code` | One-off exchange of `EPSON_AUTH_CODE` |
-| `password` | ❌ Not supported by Epson Connect API v2 |
+| `password` | ❌ Never sent — API v2 answers `unsupported_grant_type` |
 
 ### Verifying the connection
 

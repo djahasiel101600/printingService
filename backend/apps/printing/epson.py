@@ -167,20 +167,18 @@ class EpsonClient:
         if refresh:
             return {"grant_type": "refresh_token", "refresh_token": refresh}
 
-        # Legacy fallback. Epson Connect API v2 does not implement the
-        # resource-owner password grant, so this can only ever be answered with
-        # "unsupported_grant_type" — complete the authorization-code flow instead.
-        if not settings.EPSON_DEVICE_EMAIL:
-            raise EpsonError(
-                "Epson device not connected. Open Admin -> API Settings and run "
-                "the device authorization flow, or set EPSON_MOCK_MODE=True."
-            )
-        return {
-            "grant_type": "password",
-            "username": settings.EPSON_DEVICE_EMAIL,
-            "password": settings.EPSON_DEVICE_PASSWORD,
-            "scope": "device",
-        }
+        # Epson Connect API v2 implements ONLY the authorization-code flow for
+        # device tokens (openapi.spec securitySchemes.deviceToken): there is no
+        # resource-owner password grant. EPSON_DEVICE_EMAIL / EPSON_DEVICE_PASSWORD
+        # must never become a grant_type=password request - that is always
+        # answered with "unsupported_grant_type". Fail with instructions instead
+        # of sending a request the API can only reject.
+        raise EpsonError(
+            "Epson device not connected (no device refresh token). Complete the "
+            "device authorization flow in Admin -> API Settings (Epson device "
+            "authorization -> Get authorization URL -> sign in to Epson), or set "
+            "EPSON_MOCK_MODE=True to simulate printing."
+        )
 
     def get_device_token(self, force_refresh: bool = False) -> str:
         """Fetch (and cache) a device access token from the auth server."""

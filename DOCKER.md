@@ -212,7 +212,8 @@ app. To print for real:
 
 > The `redirect_uri` is `$FRONTEND_URL/epson/callback` unless you set
 > `EPSON_REDIRECT_URI`. It must **byte-for-byte match** the "Redirect URI" saved
-> on the Epson app, otherwise Epson answers `invalid_client`.
+> on the Epson app — otherwise the sign-in page answers `invalid_request` /
+> `Forbidden`, and the token exchange fails with `invalid_client`.
 
 ---
 

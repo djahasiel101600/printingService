@@ -171,7 +171,12 @@ EPSON_CLIENT_SECRET = os.getenv("EPSON_CLIENT_SECRET", "")
 # Must byte-for-byte match the "Redirect URI" saved in the Epson app
 # (tutorial §3). Defaults to <FRONTEND_URL>/epson/callback.
 EPSON_REDIRECT_URI = os.getenv("EPSON_REDIRECT_URI", "")
-EPSON_DEVICE_GRANT = os.getenv("EPSON_DEVICE_GRANT", "password")
+# Only "refresh_token" (default) or the one-off "authorization_code" exchange
+# make sense: API v2 has NO password grant, so "password" always fails with
+# "unsupported_grant_type".
+EPSON_DEVICE_GRANT = os.getenv("EPSON_DEVICE_GRANT", "refresh_token")
+# Informational only (the printer's Email-Print address / portal login) — these
+# are NOT used to obtain tokens; the device flow in Admin -> API Settings is.
 EPSON_DEVICE_EMAIL = os.getenv("EPSON_DEVICE_EMAIL", "")
 EPSON_DEVICE_PASSWORD = os.getenv("EPSON_DEVICE_PASSWORD", "")
 EPSON_DEVICE_REFRESH_TOKEN = os.getenv("EPSON_DEVICE_REFRESH_TOKEN", "")

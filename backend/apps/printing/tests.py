@@ -46,6 +46,22 @@ class EpsonTokenPayloadTests(TestCase):
 
         self.assertIn("device authorization flow", str(ctx.exception))
 
+    def test_password_grant_is_never_sent(self):
+        """API v2 has no password grant: configured e-mail/password must NOT
+        produce grant_type=password (that is the unsupported_grant_type bug) —
+        the user has to run the device authorization flow instead."""
+        with override_settings(
+            EPSON_DEVICE_REFRESH_TOKEN="",
+            EPSON_DEVICE_EMAIL="printer@demo.epsonconnect.com",
+            EPSON_DEVICE_PASSWORD="hunter2",
+            EPSON_DEVICE_GRANT="password",
+        ):
+            with self.assertRaises(EpsonError) as ctx:
+                EpsonClient(mock_mode=False)._token_payload()
+
+        self.assertIn("device authorization flow", str(ctx.exception))
+        self.assertNotIn("password", str(ctx.exception).lower().replace("password grant", ""))
+
 
 class EpsonDeviceFlowViewTests(TestCase):
     def setUp(self):
@@ -66,6 +82,7 @@ class EpsonDeviceFlowViewTests(TestCase):
         self.assertEqual(body["refresh_token_source"], "none")
 
     @override_settings(FRONTEND_URL="https://print.example.com",
+                       EPSON_REDIRECT_URI="",  # exercise the derived default
                        EPSON_CLIENT_ID="cid", EPSON_CLIENT_SECRET="secret")
     def test_auth_url_stores_state_and_encodes_redirect(self):
         with patch("apps.printing.epson.EpsonClient.get_application_token", return_value="tok"):
