@@ -1,6 +1,6 @@
 """Epson device-authorization tests. Network calls are mocked."""
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from django.test import TestCase, override_settings
@@ -61,6 +61,75 @@ class EpsonTokenPayloadTests(TestCase):
 
         self.assertIn("device authorization flow", str(ctx.exception))
         self.assertNotIn("password", str(ctx.exception).lower().replace("password grant", ""))
+
+
+class EpsonUploadFileTests(TestCase):
+    """The upload POST must be accepted by Epson's upload endpoint.
+
+    Regression: sending the bytes with no ``Content-Type`` (and an unencoded
+    ``File`` name) made the endpoint answer a bodyless ``400 Bad Request``,
+    which surfaced as "All print jobs failed to submit".
+    """
+
+    def setUp(self):
+        self.client = EpsonClient(mock_mode=False)
+        self.content = b"%PDF-1.4 fake payload"
+
+    def _post(self, upload_uri, file_name, content=None):
+        with patch.object(self.client.session, "post") as post:
+            post.return_value = Mock(status_code=200, text="")
+            self.client.upload_file(upload_uri, file_name,
+                                    self.content if content is None else content)
+        return post.call_args
+
+    def test_upload_sets_a_pdf_content_type(self):
+        args, kwargs = self._post("https://x/data?Key=k", "science activity.pdf")
+
+        self.assertEqual(kwargs["headers"], {"Content-Type": "application/pdf"})
+
+    def test_upload_percent_encodes_the_file_name(self):
+        args, _ = self._post("https://x/data?Key=k", "science activity.pdf")
+
+        self.assertEqual(args[0], "https://x/data?Key=k&File=science%20activity.pdf")
+
+    def test_upload_uses_ampersand_when_uri_already_has_a_query(self):
+        args, _ = self._post("https://x/data?Key=k&Other=1", "1.pdf")
+
+        self.assertEqual(args[0], "https://x/data?Key=k&Other=1&File=1.pdf")
+
+    def test_content_type_follows_the_extension(self):
+        cases = {"a.pdf": "application/pdf", "a.jpg": "image/jpeg",
+                 "a.jpeg": "image/jpeg", "a.png": "image/png"}
+
+        for name, expected in cases.items():
+            with self.subTest(name=name):
+                _, kwargs = self._post("https://x/data?Key=k", name)
+                self.assertEqual(kwargs["headers"], {"Content-Type": expected})
+
+    def test_unknown_extension_falls_back_to_sniffing_the_payload(self):
+        _, kwargs = self._post("https://x/data?Key=k", "scan", content=b"\x89PNG\r\n\x1a\nrest")
+
+        self.assertEqual(kwargs["headers"], {"Content-Type": "image/png"})
+
+    def test_upload_never_sends_an_empty_content_type(self):
+        for name in ("noextension", "weird.xyz"):
+            with self.subTest(name=name):
+                _, kwargs = self._post("https://x/data?Key=k", name)
+                self.assertTrue(kwargs["headers"]["Content-Type"])
+
+    def test_error_response_raises_with_status(self):
+        with patch.object(self.client.session, "post") as post:
+            post.return_value = Mock(status_code=400, text="")
+            with self.assertRaises(EpsonError) as ctx:
+                self.client.upload_file("https://x/data?Key=k", "a.pdf", self.content)
+
+        self.assertIn("400", str(ctx.exception))
+
+    def test_mock_mode_performs_no_request(self):
+        with patch.object(EpsonClient(mock_mode=True).session, "post") as post:
+            EpsonClient(mock_mode=True).upload_file("https://x/data?Key=k", "a.pdf", self.content)
+
+        post.assert_not_called()
 
 
 class EpsonDeviceFlowViewTests(TestCase):

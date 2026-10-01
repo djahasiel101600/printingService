@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
@@ -66,6 +67,17 @@ def get_mock_state() -> _MockState:
 
 class EpsonClient:
     """Thin HTTP wrapper around Epson Connect API v2."""
+
+    # Content types the upload endpoint accepts (openapi.spec components
+    # requestBodies ``File``). Anything outside this set is answered with an
+    # error, and a request with *no* Content-Type at all is answered with a
+    # bodyless ``400 Bad Request``.
+    UPLOAD_CONTENT_TYPES = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+    }
 
     def __init__(self, mock_mode: bool | None = None):
         self.mock_mode = settings.EPSON_MOCK_MODE if mock_mode is None else mock_mode
@@ -297,13 +309,39 @@ class EpsonClient:
         data = self._request("POST", "/printing/jobs", json_body=body)
         return EpsonJobResult(job_id=data["jobId"], upload_uri=data["uploadUri"])
 
+    def _upload_content_type(self, file_name: str, content: bytes) -> str:
+        """Pick the Content-Type Epson's upload endpoint will accept.
+
+        Epson answers a request without a Content-Type with an empty ``400``,
+        so this must never return ``""``. Fall back to sniffing the payload
+        when the extension is missing or unknown.
+        """
+        suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        if suffix in self.UPLOAD_CONTENT_TYPES:
+            return self.UPLOAD_CONTENT_TYPES[suffix]
+        if content[:4] == b"%PDF":
+            return self.UPLOAD_CONTENT_TYPES["pdf"]
+        if content[:3] == b"\xff\xd8\xff":
+            return self.UPLOAD_CONTENT_TYPES["jpg"]
+        if content[:8] == b"\x89PNG\r\n\x1a\n":
+            return self.UPLOAD_CONTENT_TYPES["png"]
+        return "application/octet-stream"
+
     def upload_file(self, upload_uri: str, file_name: str, content: bytes) -> None:
-        """POST the binary to the job's uploadUri with ``&File=<name>``."""
+        """POST the binary to the job's uploadUri with ``&File=<name>``.
+
+        Two things matter here and both were wrong before: the ``File`` name
+        must be percent-encoded (it comes from the customer's upload and can
+        contain spaces or non-ASCII), and the request must carry an explicit
+        ``Content-Type`` from Epson's accepted set — a request without one is
+        rejected with a bodyless ``400 Bad Request``.
+        """
         if self.mock_mode:
             return
         separator = "&" if "?" in upload_uri else "?"
-        url = f"{upload_uri}{separator}File={file_name}"
-        response = self.session.post(url, data=content, timeout=300)
+        url = f"{upload_uri}{separator}File={quote(file_name)}"
+        headers = {"Content-Type": self._upload_content_type(file_name, content)}
+        response = self.session.post(url, data=content, headers=headers, timeout=300)
         if response.status_code >= 400:
             raise EpsonError(f"File upload failed ({response.status_code}): {response.text[:300]}")
 
