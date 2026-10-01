@@ -1,0 +1,146 @@
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { api, apiErrorMessage } from "@/lib/api";
+
+interface TestResult {
+  mock_mode?: boolean;
+  overall?: string;
+  tests?: Record<string, { status: string; error?: string; data?: any }>;
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === "success") return <CheckCircle2 className="h-4 w-4 text-green-600" />;
+  if (status === "failed") return <XCircle className="h-4 w-4 text-red-600" />;
+  return <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />;
+}
+
+export default function AdminSettingsPage() {
+  const [epsonMockMode, setEpsonMockMode] = useState(true);
+  const [paymongoMockMode, setPaymongoMockMode] = useState(true);
+
+  const epsonTestMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<TestResult>("/admin/epson/test-connection/", { mock_mode: epsonMockMode });
+      return data;
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  const paymongoTestMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<TestResult>("/admin/paymongo/test-connection/", { mock_mode: paymongoMockMode });
+      return data;
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">API Settings</h1>
+        <p className="text-muted-foreground">Configure and test your Epson Connect and PayMongo integrations.</p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5" />
+            Epson Connect API
+          </CardTitle>
+          <CardDescription>Configure your Epson printer connection.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <Label className="text-base">Mock Mode</Label>
+              <p className="text-sm text-muted-foreground">Simulate printer responses without a real device.</p>
+            </div>
+            <Switch checked={epsonMockMode} onCheckedChange={setEpsonMockMode} />
+          </div>
+          <Alert variant={epsonMockMode ? "default" : "warning"}>
+            <AlertDescription>
+              {epsonMockMode ? "Mock mode is ON. No real printer connection." : "Mock mode is OFF. Real credentials from .env will be used."}
+            </AlertDescription>
+          </Alert>
+          <Button onClick={() => epsonTestMutation.mutate()} disabled={epsonTestMutation.isPending}>
+            {epsonTestMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Test Epson Connection
+          </Button>
+          {epsonTestMutation.data && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center gap-2 font-medium">
+                <StatusIcon status={epsonTestMutation.data.overall ?? ""} />
+                Overall: {epsonTestMutation.data.overall === "success" ? "All tests passed!" : "Some tests failed"}
+              </div>
+              {epsonTestMutation.data.tests && Object.entries(epsonTestMutation.data.tests).map(([key, test]) => (
+                <div key={key} className="flex items-start gap-2 text-sm">
+                  <StatusIcon status={test.status} />
+                  <div>
+                    <span className="font-medium">{key.replace(/_/g, " ")}</span>
+                    {test.status === "success" && test.data && (
+                      <span className="ml-2 text-muted-foreground">{test.data.productName} ({test.data.serialNumber})</span>
+                    )}
+                    {test.status === "failed" && <p className="text-xs text-red-600">{test.error}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5" />
+            PayMongo (QR Ph)
+          </CardTitle>
+          <CardDescription>Configure your payment gateway.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <Label className="text-base">Mock Mode</Label>
+              <p className="text-sm text-muted-foreground">Simulate payments without real transactions.</p>
+            </div>
+            <Switch checked={paymongoMockMode} onCheckedChange={setPaymongoMockMode} />
+          </div>
+          <Alert variant={paymongoMockMode ? "default" : "warning"}>
+            <AlertDescription>
+              {paymongoMockMode ? "Mock mode is ON. No real payments." : "Mock mode is OFF. Real credentials from .env will be used."}
+            </AlertDescription>
+          </Alert>
+          <Button onClick={() => paymongoTestMutation.mutate()} disabled={paymongoTestMutation.isPending}>
+            {paymongoTestMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Test PayMongo Connection
+          </Button>
+          {paymongoTestMutation.data && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center gap-2 font-medium">
+                <StatusIcon status={paymongoTestMutation.data.overall ?? ""} />
+                Overall: {paymongoTestMutation.data.overall === "success" ? "All tests passed!" : "Some tests failed"}
+              </div>
+              {paymongoTestMutation.data.tests && Object.entries(paymongoTestMutation.data.tests).map(([key, test]) => (
+                <div key={key} className="flex items-start gap-2 text-sm">
+                  <StatusIcon status={test.status} />
+                  <div>
+                    <span className="font-medium">{key.replace(/_/g, " ")}</span>
+                    {test.status === "failed" && <p className="text-xs text-red-600">{test.error}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

@@ -1,0 +1,99 @@
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { RefreshCw } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/api";
+import type { Order } from "@/lib/types";
+
+const ADMIN_STATUSES = [
+  { value: "", label: "All" },
+  { value: "pending_review", label: "Pending review" },
+  { value: "approved_queued", label: "Approved" },
+  { value: "printing", label: "Printing" },
+  { value: "on_hold", label: "On hold" },
+  { value: "printed_ready", label: "Ready" },
+];
+
+export default function AdminOrdersPage() {
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState("pending_review");
+
+  const { data: orders, isLoading } = useQuery({
+    queryKey: ["admin-orders", tab],
+    queryFn: async () => {
+      const params = tab ? `?status=${tab}` : "";
+      const { data } = await api.get<Order[]>(`/admin/orders/${params}`);
+      return data;
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      await api.post("/admin/print-jobs/");
+    },
+    onSuccess: () => {
+      toast.success("Print job statuses synced.");
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Admin — Orders</h1>
+        <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+          <RefreshCw className="mr-2 h-4 w-4" /> Sync printers
+        </Button>
+      </div>
+
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="flex-wrap">
+          {ADMIN_STATUSES.map((s) => (
+            <TabsTrigger key={s.value} value={s.value}>{s.label}</TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+        </div>
+      ) : orders && orders.length > 0 ? (
+        <div className="space-y-3">
+          {orders.map((order) => (
+            <Card key={order.id} className="transition-shadow hover:shadow-md">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <div>
+                  <CardTitle className="text-base">
+                    <Link to={`/admin/orders/${order.id}`} className="hover:underline">{order.tracking_id}</Link>
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">{order.client_name} · {new Date(order.created_at).toLocaleString()}</p>
+                </div>
+                <StatusBadge status={order.status} display={order.status_display} />
+              </CardHeader>
+              <CardContent className="flex items-center justify-between text-sm">
+                <p className="text-muted-foreground">{order.files.length} file(s) · ₱{order.subtotal_peso.toFixed(2)}</p>
+                <Button asChild variant="outline" size="sm">
+                  <Link to={`/admin/orders/${order.id}`}>Review</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">No orders in this queue.</CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
