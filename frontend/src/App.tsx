@@ -8,6 +8,7 @@ import { RequireAuth } from "@/components/ProtectedRoute";
 
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import SetupPage from "@/pages/SetupPage";
 import NewOrderPage from "@/pages/NewOrderPage";
 import TrackOrderPage from "@/pages/TrackOrderPage";
 import MyOrdersPage from "@/pages/MyOrdersPage";
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/setup" element={<SetupPage />} />
               <Route path="/order" element={<NewOrderPage />} />
               <Route path="/track" element={<TrackOrderPage />} />
               <Route

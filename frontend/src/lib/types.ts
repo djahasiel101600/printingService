@@ -145,6 +145,10 @@ export interface CurrentUser {
   is_shop_admin: boolean;
 }
 
+export interface SetupStatus {
+  needs_setup: boolean;
+}
+
 export interface PriceRule {
   id: number;
   media_size: string;

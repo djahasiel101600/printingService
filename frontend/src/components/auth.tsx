@@ -9,11 +9,20 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<CurrentUser>;
   register: (payload: RegisterPayload) => Promise<CurrentUser>;
+  setupAdmin: (payload: SetupPayload) => Promise<CurrentUser>;
   logout: () => void;
   refresh: () => Promise<void>;
 }
 
 export interface RegisterPayload {
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  phone?: string;
+}
+
+export interface SetupPayload {
   email: string;
   password: string;
   first_name: string;
@@ -60,14 +69,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return login(payload.email, payload.password);
   }, []);
 
+  /** First-run only: creates the shop's first admin and logs them straight in. */
+  const setupAdmin = useCallback(async (payload: SetupPayload) => {
+    const { data } = await api.post("/auth/setup/", payload);
+    setToken(data.access);
+    setUser(data.user);
+    return data.user as CurrentUser;
+  }, []);
+
   const logout = useCallback(() => {
     setToken(null);
     setUser(null);
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, refresh }),
-    [user, loading, login, register, logout, refresh],
+    () => ({ user, loading, login, register, setupAdmin, logout, refresh }),
+    [user, loading, login, register, setupAdmin, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

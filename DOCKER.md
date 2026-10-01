@@ -73,22 +73,40 @@ docker compose up -d --build
 
 Then open `https://print.jdp-homelab.space`.
 
-### First-time setup (seed pricing rules + accounts)
+### First-time setup (create the admin)
 
-A fresh database has no pricing rules and no admin user. Create them once:
+A fresh deployment has **no admin user and no pricing rules**. Bootstrap it one
+of two ways:
+
+**1. Setup wizard (recommended).** Open `https://<your-host>/setup` and create
+the shop administrator from the browser. It is a one-time page: the backend
+returns `403` as soon as an admin exists, so it can never mint extra admins. The
+account it creates is a full owner (API admin **and** `/django-admin/`). Pricing
+rules still need seeding once:
 
 ```bash
 docker compose exec printservice-backend python manage.py seed_demo
 ```
 
-(Set `RUN_SEED_DEMO=true` in `.env` to run it automatically on the next boot
-instead of doing it manually. `seed_demo` is idempotent.)
+**2. Seed the demo data.** `seed_demo` creates the pricing rules *and* known
+accounts — convenient for a demo, but **change these passwords before exposing
+the site**, since they are public defaults:
 
-Create a Django superuser for the admin site (`/django-admin/`):
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | `admin@print.local` | `admin1234` |
+| Client | `client@example.com` | `client1234` |
 
 ```bash
-docker compose exec printservice-backend python manage.py createsuperuser
+docker compose exec printservice-backend python manage.py seed_demo
 ```
+
+Set `RUN_SEED_DEMO=true` in `.env` to run it automatically on the next boot
+(idempotent).
+
+> The `seed_demo` admin has shop-admin rights in the app but is **not** a Django
+> `is_staff` user, so it cannot open `/django-admin/`. The setup-wizard account
+> can. Use `python manage.py createsuperuser` if you need an extra Django admin.
 
 ## 5. Useful commands
 

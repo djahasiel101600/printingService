@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -7,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiErrorMessage } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
+import type { SetupStatus } from "@/lib/types";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -16,6 +18,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Surfaces a one-time "create the shop admin" link until setup is done.
+  const { data: setupStatus } = useQuery({
+    queryKey: ["setup-status"],
+    queryFn: async () => (await api.get<SetupStatus>("/auth/setup/")).data,
+  });
 
   const from = (location.state as { from?: string } | null)?.from ?? "/";
 
@@ -73,6 +81,14 @@ export default function LoginPage() {
                 Sign up
               </Link>
             </p>
+            {setupStatus?.needs_setup && (
+              <p className="text-center text-xs text-muted-foreground">
+                First time here?{" "}
+                <Link to="/setup" className="text-primary underline-offset-4 hover:underline">
+                  Set up the shop admin
+                </Link>
+              </p>
+            )}
           </form>
         </CardContent>
       </Card>
