@@ -2,6 +2,10 @@
 
 This guide covers everything needed to run the full application locally, including optional integrations with Epson Connect and PayMongo.
 
+> **Deploying with Docker?** See [DOCKER.md](DOCKER.md) for the containerized
+> setup published through the shared `jdp-network` + Cloudflare tunnel
+> (`docker compose up -d --build`).
+
 ---
 
 ## Table of Contents

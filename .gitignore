@@ -4,6 +4,8 @@ node_modules/
 # Environment variables
 .env
 .env.*
+# ...but keep the committed templates so they ship with the repo.
+!**/.env.example
 
 # Build outputs
 dist/

@@ -1,0 +1,143 @@
+# Print Service — Django API + React SPA, published through the shared
+# cloudflared tunnel on the external `jdp-network`.
+#
+#   Cloudflare tunnel ingress for the public hostname:
+#       http://printservice-frontend:80
+#
+#   docker compose up -d --build
+#
+# Runtime configuration is read from ./.env (copy .env.example -> .env).
+# Only the frontend joins `jdp-network`; the backend and database stay on the
+# project-internal network and are reachable only through it.
+
+services:
+  printservice-backend:
+    build:
+      context: ./backend
+    image: printservice-backend:latest
+    container_name: printservice-backend
+    restart: unless-stopped
+    networks:
+      - default
+    environment:
+      # --- Django / DRF -------------------------------------------------
+      SECRET_KEY: "${SECRET_KEY:?set SECRET_KEY in .env (see .env.example)}"
+      DEBUG: "${DEBUG:-False}"
+      # cloudflared forwards the public hostname as Host — it MUST be listed
+      # here or Django answers every request with 400 DisallowedHost.
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-print.jdp-homelab.space,printservice-backend,printservice-frontend,localhost,127.0.0.1}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://print.jdp-homelab.space}"
+      CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-https://print.jdp-homelab.space}"
+      # --- Database (sqlite by default) ---------------------------------
+      # For Postgres: set DB_ENGINE=postgres in .env and start the "postgres"
+      # profile:   docker compose --profile postgres up -d --build
+      DB_ENGINE: "${DB_ENGINE:-sqlite}"
+      SQLITE_PATH: /app/data/db.sqlite3
+      DB_NAME: "${DB_NAME:-printservice}"
+      DB_USER: "${DB_USER:-printservice}"
+      DB_PASSWORD: "${DB_PASSWORD:-printservice-change-me}"
+      DB_HOST: "${DB_HOST:-printservice-db}"
+      DB_PORT: "${DB_PORT:-5432}"
+      # --- Business rules -----------------------------------------------
+      MIN_PARTIAL_PERCENT: "${MIN_PARTIAL_PERCENT:-50}"
+      DUPLEX_DISCOUNT_FACTOR: "${DUPLEX_DISCOUNT_FACTOR:-0.90}"
+      # --- Epson Connect API v2 -----------------------------------------
+      EPSON_MOCK_MODE: "${EPSON_MOCK_MODE:-True}"
+      EPSON_API_BASE: "${EPSON_API_BASE:-https://api.epsonconnect.com/api/2}"
+      EPSON_UPLOAD_BASE: "${EPSON_UPLOAD_BASE:-https://upload.epsonconnect.com}"
+      EPSON_AUTH_BASE: "${EPSON_AUTH_BASE:-https://auth.epsonconnect.com}"
+      EPSON_API_KEY: "${EPSON_API_KEY:-}"
+      EPSON_CLIENT_ID: "${EPSON_CLIENT_ID:-}"
+      EPSON_CLIENT_SECRET: "${EPSON_CLIENT_SECRET:-}"
+      EPSON_DEVICE_GRANT: "${EPSON_DEVICE_GRANT:-password}"
+      EPSON_DEVICE_EMAIL: "${EPSON_DEVICE_EMAIL:-}"
+      EPSON_DEVICE_PASSWORD: "${EPSON_DEVICE_PASSWORD:-}"
+      EPSON_DEVICE_REFRESH_TOKEN: "${EPSON_DEVICE_REFRESH_TOKEN:-}"
+      EPSON_AUTH_CODE: "${EPSON_AUTH_CODE:-}"
+      EPSON_PRINTER_NAME: "${EPSON_PRINTER_NAME:-Shop Printer}"
+      # --- PayMongo (QR Ph) ---------------------------------------------
+      PAYMONGO_MOCK_MODE: "${PAYMONGO_MOCK_MODE:-True}"
+      PAYMONGO_SECRET_KEY: "${PAYMONGO_SECRET_KEY:-}"
+      PAYMONGO_WEBHOOK_SECRET: "${PAYMONGO_WEBHOOK_SECRET:-}"
+      FRONTEND_URL: "${FRONTEND_URL:-https://print.jdp-homelab.space}"
+      # --- Email notifications (optional) -------------------------------
+      EMAIL_BACKEND: "${EMAIL_BACKEND:-}"
+      EMAIL_HOST: "${EMAIL_HOST:-}"
+      EMAIL_PORT: "${EMAIL_PORT:-587}"
+      EMAIL_HOST_USER: "${EMAIL_HOST_USER:-}"
+      EMAIL_HOST_PASSWORD: "${EMAIL_HOST_PASSWORD:-}"
+      DEFAULT_FROM_EMAIL: "${DEFAULT_FROM_EMAIL:-printshop@example.com}"
+      # --- Runtime tuning -----------------------------------------------
+      RUN_MIGRATIONS: "${RUN_MIGRATIONS:-true}"
+      RUN_SEED_DEMO: "${RUN_SEED_DEMO:-false}"
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-3}"
+      GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+      GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-120}"
+      # Keep-alive above Cloudflare's idle-reuse window to avoid random 502s.
+      GUNICORN_KEEPALIVE: "${GUNICORN_KEEPALIVE:-75}"
+    volumes:
+      - printservice-data:/app/data
+      - printservice-media:/app/media
+    # No host ports — reachable through the frontend and on the docker network.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  printservice-frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: "${VITE_API_URL:-/api}"
+    image: printservice-frontend:latest
+    container_name: printservice-frontend
+    restart: unless-stopped
+    depends_on:
+      - printservice-backend
+    networks:
+      - default
+      - jdp-network
+    # Ingress target for cloudflared: http://printservice-frontend:80
+    # Uncomment to also expose it on the host while testing locally:
+    # ports:
+    #   - "8080:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  printservice-db:
+    image: postgres:16-alpine
+    container_name: printservice-db
+    restart: unless-stopped
+    # Opt-in service — only started with:  docker compose --profile postgres up -d
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: "${DB_NAME:-printservice}"
+      POSTGRES_USER: "${DB_USER:-printservice}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:-printservice-change-me}"
+    volumes:
+      - printservice-postgres:/var/lib/postgresql/data
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-printservice} -d ${DB_NAME:-printservice}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  printservice-data:
+  printservice-media:
+  printservice-postgres:
+
+networks:
+  jdp-network:
+    external: true

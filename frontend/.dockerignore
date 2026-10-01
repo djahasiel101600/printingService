@@ -1,0 +1,11 @@
+# Rebuilt inside the image / not needed at build time.
+node_modules
+dist
+
+# Local secrets & editor files
+.env
+.env.*
+.git
+.gitignore
+*.log
+*.tsbuildinfo

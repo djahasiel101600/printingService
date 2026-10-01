@@ -1,0 +1,18 @@
+# Keep the build context lean; runtime state must never be baked into an image.
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+
+# Local database / uploads / collected static
+db.sqlite3
+media
+staticfiles
+
+# Local secrets & editor files
+.env
+.env.*
+.git
+.gitignore
+*.log

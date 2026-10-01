@@ -77,12 +77,29 @@ TEMPLATES = [
 WSGI_APPLICATION = "print_service.wsgi.application"
 
 # ------------------------------------------------------------- database
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# SQLite by default (zero-config, single file). Set DB_ENGINE=postgres to use a
+# managed database instead — docker-compose.yml bundles an optional Postgres
+# service behind the "postgres" profile.
+if os.getenv("DB_ENGINE", "sqlite").strip().lower() == "postgres":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("DB_NAME", "printservice"),
+            "USER": os.getenv("DB_USER", "printservice"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": os.getenv("DB_HOST", "printservice-db"),
+            "PORT": os.getenv("DB_PORT", "5432"),
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            # Path override lets the container keep the DB on a persistent volume.
+            "NAME": os.getenv("SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
+        }
+    }
 
 # ----------------------------------------------------------------- auth
 AUTH_USER_MODEL = "accounts.User"
@@ -132,6 +149,12 @@ CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173",
 )
+
+# Behind the Cloudflare tunnel / reverse proxy: cloudflared and nginx send
+# X-Forwarded-Proto, so Django can build https absolute URLs and pass CSRF
+# checks for the admin login. Empty by default — local development is unaffected.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", "")
 
 # ------------------------------------------------------------ business
 MIN_PARTIAL_PERCENT = int(os.getenv("MIN_PARTIAL_PERCENT", "50"))
