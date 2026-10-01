@@ -23,6 +23,10 @@ class PrintJob(models.Model):
     printer_name = models.CharField(max_length=128, blank=True)
     print_mode = models.CharField(max_length=16, blank=True)          # document | photo
     print_settings_snapshot = models.JSONField(default=dict, blank=True)
+    # Page numbers actually sent for this file (empty = every page). Snapshot so
+    # the history of a reprint still shows what each run contained.
+    pages_snapshot = models.JSONField(default=list, blank=True)
+    is_reprint = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=JobStatus.choices, default=JobStatus.CREATED)
     epson_status = models.CharField(max_length=32, blank=True)        # raw Epson status enum
     pages_printed = models.PositiveIntegerField(default=0)
@@ -37,6 +41,18 @@ class PrintJob(models.Model):
 
     def __str__(self) -> str:
         return f"PrintJob {self.epson_job_id or '?'} for {self.order.tracking_id}"
+
+    @property
+    def is_printer_cancelled(self) -> bool:
+        """The printer dropped the job rather than the shop or the client."""
+        return self.status == self.JobStatus.CANCELED
+
+    @property
+    def pages_label(self) -> str:
+        from apps.orders.models import format_page_selection
+
+        pages = self.pages_snapshot or []
+        return format_page_selection(pages) if pages else "All pages"
 
 
 class EpsonCredential(models.Model):

@@ -185,12 +185,73 @@ def apply_edit(order_file, action: str, params: dict | None = None) -> None:
 
     order_file.edited_file.save(new_name, ContentFile(new_content), save=False)
     order_file.page_count = count_pages(order_file.file_type, new_content)
+    # A customer edit changes the document, so any admin page selection made
+    # against the previous revision no longer lines up.
+    order_file.page_selection = []
+    order_file.final_file = None
     actions = list(order_file.edit_actions or [])
     actions.append({"action": action, **params})
     order_file.edit_actions = actions
     order_file.save()
 
 
+def select_pages(order_file, pages: list[int] | None) -> list[int]:
+    """Admin page selection ("which pages should be printed?").
+
+    Physically trims the PDF into ``final_file`` so the printer receives exactly
+    the chosen sheets — Epson Connect has no page-range parameter, so the work
+    has to happen before upload. Passing an empty selection (or ``None``) clears
+    it and prints the whole document again.
+
+    Returns the normalised selection actually stored.
+    """
+    from apps.orders.models import format_page_selection
+
+    if order_file.file_type != "pdf":
+        # Images are a single sheet; nothing to select.
+        order_file.page_selection = []
+        order_file.save(update_fields=["page_selection"])
+        return []
+
+    source = order_file.edited_file or order_file.file
+    source.open("rb")
+    content = source.read()
+    source.close()
+
+    try:
+        total = count_pages("pdf", content)
+    except FileEditError:
+        total = order_file.page_count
+    order_file.page_count = total
+
+    wanted = sorted({int(p) for p in (pages or [])})
+    wanted = [p for p in wanted if 1 <= p <= total]
+    if not wanted or wanted == list(range(1, total + 1)):
+        # Nothing to trim — drop the prepared file so the original goes out.
+        order_file.page_selection = []
+        if order_file.final_file:
+            order_file.final_file.delete(save=False)
+            order_file.final_file = None
+        order_file.save(update_fields=["page_selection", "final_file"])
+        return []
+
+    trimmed = edit_pdf(content, "split", {"pages": wanted})
+    name = _final_name(order_file.file_name)
+    order_file.final_file.save(name, ContentFile(trimmed), save=False)
+    order_file.page_selection = wanted
+    actions = list(order_file.edit_actions or [])
+    actions.append({"action": "select_pages", "pages": format_page_selection(wanted)})
+    order_file.edit_actions = actions
+    order_file.save(update_fields=["final_file", "page_selection", "edit_actions"])
+    return wanted
+
+
 def _edited_name(original: str, extension: str) -> str:
     stem = original.rsplit(".", 1)[0][:180]
     return f"{stem}-edited.{extension}"
+
+
+def _final_name(original: str) -> str:
+    stem = original.rsplit(".", 1)[0][:180]
+    return f"{stem}-final.pdf"
+

@@ -26,6 +26,11 @@ class Order(models.Model):
         PRINTING = "printing", "Printing"
         ON_HOLD = "on_hold", "On Hold - Printer Issue"
         PRINTED_READY = "printed_ready", "Printed - Ready for Pickup"
+        # The printer (or its queue) dropped the job — nothing was printed.
+        # Deliberately distinct from CANCELLED, which means the *customer* or
+        # the shop called the whole order off. Recovery is a reprint, so the
+        # job stays open and the admin gets a "Reprint" button.
+        PRINT_CANCELLED = "print_cancelled", "Cancelled at Printer"
         REJECTED = "rejected", "Rejected"
         CANCELLED = "cancelled", "Cancelled"
         COMPLETED = "completed", "Completed"
@@ -65,6 +70,10 @@ class Order(models.Model):
 
     admin_notes = models.TextField(blank=True, help_text="Internal notes, never shown to clients")
     revision_note = models.TextField(blank=True, help_text="Sent to the client when a revision is requested")
+
+    # How many times the shop has re-sent this order to the printer. Reprints
+    # keep the original order (and its audit trail) and add a new set of jobs.
+    reprint_count = models.PositiveSmallIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -134,7 +143,9 @@ class Order(models.Model):
             spec = getattr(order_file, "specification", None)
             specs.append({
                 "label": order_file.file_name,
-                "page_count": order_file.page_count,
+                # Only the pages the admin kept are charged for — an order where
+                # pages 4-9 were dropped must not be billed for them.
+                "page_count": order_file.selected_page_count,
                 "media_size": spec.media_size if spec else "ps_a4",
                 "media_type": spec.media_type if spec else "pt_plainpaper",
                 "color_mode": spec.color_mode if spec else "mono",
@@ -162,19 +173,46 @@ def order_edited_upload_to(instance, filename: str) -> str:
     return f"orders/{instance.order.tracking_id}/edited/{filename}"
 
 
+def order_final_upload_to(instance, filename: str) -> str:
+    """Storage for the admin-prepared file (page selection applied)."""
+    return f"orders/{instance.order.tracking_id}/final/{filename}"
+
+
+# Extensions we can render a preview for. ``PRINTABLE_EXTENSIONS`` is the much
+# smaller set Epson Connect accepts on the upload endpoint (openapi.spec
+# ``components.requestBodies.File``), so anything else must be converted to PDF
+# by the shop before the job is released to the printer.
+PREVIEWABLE_EXTENSIONS = (
+    "pdf", "jpg", "jpeg", "png", "webp",
+    "docx", "xlsx", "pptx", "txt", "md", "csv",
+)
+PRINTABLE_EXTENSIONS = ("pdf", "jpg", "jpeg", "png")
+# Legacy binary Office formats cannot be parsed with the standard library and
+# are rejected at upload time with a pointer to the modern equivalents.
+LEGACY_EXTENSIONS = ("doc", "xls", "ppt")
+
+
+def file_extension(name: str) -> str:
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
 class OrderFile(models.Model):
     """An uploaded (and optionally edited) file belonging to an order."""
 
     class FileType(models.TextChoices):
         PDF = "pdf", "PDF document"
         IMAGE = "image", "Image"
+        DOCUMENT = "document", "Office / text document"
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="files")
     file = models.FileField(
         upload_to=order_file_upload_to,
-        validators=[FileExtensionValidator(allowed_extensions=["pdf", "jpg", "jpeg", "png"])],
+        validators=[FileExtensionValidator(allowed_extensions=list(PREVIEWABLE_EXTENSIONS))],
     )
     edited_file = models.FileField(upload_to=order_edited_upload_to, blank=True, null=True)
+    # Produced by the shop: the customer's file with the admin's page selection
+    # applied. Highest priority in ``print_file``.
+    final_file = models.FileField(upload_to=order_final_upload_to, blank=True, null=True)
     file_name = models.CharField(max_length=255)
     file_type = models.CharField(max_length=8, choices=FileType.choices)
     content_type = models.CharField(max_length=100, blank=True)
@@ -182,6 +220,12 @@ class OrderFile(models.Model):
     page_count = models.PositiveIntegerField(default=1)
     # Chronological metadata of applied edits: [{action: crop|split|resize|center, ...args}]
     edit_actions = models.JSONField(default=list, blank=True)
+    # 1-based page numbers the admin kept, e.g. [1, 2, 5]. An empty list means
+    # "print the whole document" and is the default.
+    page_selection = models.JSONField(default=list, blank=True)
+    # Set when the shop replaces an un-printable upload (e.g. a .docx) with a
+    # converted PDF, so the UI can explain why the file changed.
+    replaced_by_admin = models.BooleanField(default=False)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -191,9 +235,76 @@ class OrderFile(models.Model):
         return f"{self.file_name} ({self.order.tracking_id})"
 
     @property
+    def extension(self) -> str:
+        return file_extension(self.file_name)
+
+    @property
+    def print_ready(self) -> bool:
+        """True when this file can be sent to Epson as-is (PDF or image)."""
+        return self.file_type in {self.FileType.PDF, self.FileType.IMAGE}
+
+    @property
+    def selected_pages(self) -> list[int]:
+        """Valid, sorted, de-duplicated 1-based page numbers to print."""
+        try:
+            numbers = {int(p) for p in (self.page_selection or [])}
+        except (TypeError, ValueError):
+            return []
+        return sorted(n for n in numbers if 1 <= n <= self.page_count)
+
+    @property
+    def selected_page_count(self) -> int:
+        """Number of pages actually printed (and charged for)."""
+        selected = self.selected_pages
+        return len(selected) if selected else max(1, self.page_count)
+
+    @property
+    def page_selection_active(self) -> bool:
+        return bool(self.selected_pages) and len(self.selected_pages) < self.page_count
+
+    @property
+    def page_selection_label(self) -> str:
+        """Human summary: 'All 8 pages' or '1–3, 7 of 8 pages'."""
+        total = max(1, self.page_count)
+        selected = self.selected_pages
+        if not selected:
+            return f"All {total} page{'s' if total != 1 else ''}"
+        return f"{format_page_selection(selected)} of {total} page{'s' if total != 1 else ''}"
+
+    @property
     def print_file(self):
-        """The file that goes to the printer: edited version if present."""
-        return self.edited_file or self.file
+        """The file that goes to the printer: shop-prepared > edited > original."""
+        return self.final_file or self.edited_file or self.file
+
+    @property
+    def print_file_name(self) -> str:
+        field = self.print_file
+        name = field.name or f"{self.pk}.pdf"
+        return name.rsplit("/", 1)[-1]
+
+    @property
+    def print_content_type(self) -> str:
+        """Content type for ``print_file`` — an image edit lands as JPEG."""
+        if self.final_file or self.edited_file:
+            return "application/pdf" if self.file_type == self.FileType.PDF else "image/jpeg"
+        return self.content_type or "application/octet-stream"
+
+
+def format_page_selection(pages: list[int]) -> str:
+    """[1,2,3,7] -> '1-3, 7' (used in the UI and in status history notes)."""
+    if not pages:
+        return ""
+    ordered = sorted(set(pages))
+    groups: list[tuple[int, int]] = []
+    start = prev = ordered[0]
+    for number in ordered[1:]:
+        if number == prev + 1:
+            prev = number
+            continue
+        groups.append((start, prev))
+        start = prev = number
+    groups.append((start, prev))
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in groups)
 
 
 class PrintSpecification(models.Model):

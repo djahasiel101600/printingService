@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from apps.orders.models import Order
 
-from .constants import EPSON_STATUS_TO_ORDER_STATUS
+from .constants import EPSON_STATUS_LABELS, EPSON_STATUS_TO_ORDER_STATUS
 from .epson import EpsonClient, EpsonError
 from .models import PrintJob
 
@@ -43,12 +43,23 @@ def _print_settings(spec) -> dict:
     }
 
 
-def submit_order_to_printer(order: Order) -> list[PrintJob]:
-    """Create + upload + execute an Epson job for every file of the order."""
+def submit_order_to_printer(
+    order: Order, reprint: bool = False, order_files=None,
+) -> list[PrintJob]:
+    """Create + upload + execute an Epson job for every printable file.
+
+    ``reprint=True`` tags the jobs so the admin can tell a re-run apart from
+    the original run in the job history. ``order_files`` narrows the run to a
+    subset (reprinting only the sheet the printer cancelled, say).
+    Files that are not print-ready (a .docx waiting to be converted) are
+    skipped with a recorded reason rather than pushed to Epson, which would
+    only reject them.
+    """
     client = EpsonClient()
     printer_name = _safe_printer_name(client)
+    files = order.files.all() if order_files is None else order_files
     jobs: list[PrintJob] = []
-    for order_file in order.files.all():
+    for order_file in files:
         spec = getattr(order_file, "specification", None)
         settings_snapshot = _print_settings(spec)
         job = PrintJob.objects.create(
@@ -57,8 +68,20 @@ def submit_order_to_printer(order: Order) -> list[PrintJob]:
             printer_name=printer_name,
             print_mode=_print_mode_for(order_file.file_type),
             print_settings_snapshot=settings_snapshot,
+            pages_snapshot=order_file.selected_pages,
+            is_reprint=reprint,
             status=PrintJob.JobStatus.CREATED,
         )
+        if not order_file.print_ready:
+            job.status = PrintJob.JobStatus.FAILED
+            job.error_message = (
+                f"Skipped: '{order_file.file_name}' is a "
+                f"{order_file.get_file_type_display().lower()} and cannot be sent to the printer. "
+                "Convert it to PDF and replace the file before releasing the order."
+            )
+            job.save(update_fields=["status", "error_message", "updated_at"])
+            jobs.append(job)
+            continue
         try:
             result = client.create_job(
                 job_name=f"{order.tracking_id}-{order_file.pk}",
@@ -69,7 +92,7 @@ def submit_order_to_printer(order: Order) -> list[PrintJob]:
             job.upload_uri = result.upload_uri
             with order_file.print_file.open("rb") as handle:
                 content = handle.read()
-            client.upload_file(result.upload_uri, order_file.file_name, content)
+            client.upload_file(result.upload_uri, order_file.print_file_name, content)
             client.execute_job(result.job_id)
             job.status = PrintJob.JobStatus.EXECUTED
             job.submitted_at = timezone.now()
@@ -83,12 +106,33 @@ def submit_order_to_printer(order: Order) -> list[PrintJob]:
     return jobs
 
 
+def printable_files(order: Order):
+    """Files that can actually be sent to the printer right now."""
+    return [order_file for order_file in order.files.all() if order_file.print_ready]
+
+
+def unprintable_files(order: Order):
+    """Files blocking release (unconverted Office/text uploads)."""
+    return [order_file for order_file in order.files.all() if not order_file.print_ready]
+
+
 def _safe_printer_name(client: EpsonClient) -> str:
     try:
         info = client.get_device_info()
         return info.get("productName") or "Epson Printer"
     except EpsonError:
         return "Epson Printer"
+
+
+ACTIVE_JOB_STATUSES = (
+    PrintJob.JobStatus.CREATED, PrintJob.JobStatus.SUBMITTED,
+    PrintJob.JobStatus.EXECUTED, PrintJob.JobStatus.PRINTING,
+)
+
+
+def _has_active_jobs(order: Order) -> bool:
+    """True while any sheet of the order is still queued or printing."""
+    return order.print_jobs.filter(status__in=ACTIVE_JOB_STATUSES).exists()
 
 
 def sync_print_jobs(order: Order | None = None) -> None:
@@ -110,9 +154,14 @@ def sync_print_jobs(order: Order | None = None) -> None:
         if status.status == "completed":
             job.status = PrintJob.JobStatus.COMPLETED
             job.completed_at = timezone.now()
-        elif status.status == "canceled":
+        elif status.status in ("canceled", "expired"):
+            # The printer dropped the job on its own — nothing was printed.
             job.status = PrintJob.JobStatus.CANCELED
-        elif status.status in ("media_empty", "media_jam", "marker_supply_empty", "stopped_other", "error_occurred", "expired"):
+            job.error_message = (
+                "The printer cancelled this job before it finished "
+                f"(printer reported: {status.status}). Reprint it from the admin order page."
+            )
+        elif status.status in ("media_empty", "media_jam", "marker_supply_empty", "stopped_other", "error_occurred"):
             job.status = PrintJob.JobStatus.ON_HOLD
             job.error_message = f"Printer reported: {status.status}"
         elif status.status in ("pending", "processing", "preparing", "reserved"):
@@ -120,9 +169,28 @@ def sync_print_jobs(order: Order | None = None) -> None:
         job.save()
 
         new_order_status = EPSON_STATUS_TO_ORDER_STATUS.get(status.status)
-        if new_order_status and job.order.status not in (
-            Order.Status.PENDING_REVIEW, Order.Status.REJECTED, Order.Status.CANCELLED, Order.Status.COMPLETED,
-            Order.Status.REVISION_REQUESTED,
+        if not new_order_status:
+            continue
+        # Orders the admin or customer already decided on are never overridden
+        # by a printer poll.
+        if job.order.status in (
+            Order.Status.PENDING_REVIEW, Order.Status.REJECTED, Order.Status.CANCELLED,
+            Order.Status.COMPLETED, Order.Status.REVISION_REQUESTED,
+            Order.Status.PRINT_CANCELLED,
         ):
-            if job.order.status != new_order_status:
-                job.order.set_status(new_order_status, note=f"Epson job {job.epson_job_id}: {status.status}")
+            continue
+        if new_order_status == Order.Status.PRINT_CANCELLED and _has_active_jobs(job.order):
+            # Other sheets of the same order are still going — keep the order in
+            # its current state and let the admin reprint the cancelled file.
+            continue
+        if job.order.status != new_order_status:
+            label = EPSON_STATUS_LABELS.get(status.status, status.status)
+            job.order.set_status(
+                new_order_status,
+                note=(
+                    f"Printer cancelled job {job.epson_job_id} ({label}). "
+                    "Nothing was printed — reprint from the admin page."
+                    if new_order_status == Order.Status.PRINT_CANCELLED
+                    else f"Epson job {job.epson_job_id}: {label}"
+                ),
+            )

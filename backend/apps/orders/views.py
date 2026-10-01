@@ -11,11 +11,17 @@ from rest_framework.views import APIView
 
 from apps.pricing.quotation import compute_quote
 from apps.pricing.views import IsShopAdmin
-from apps.printing.services import submit_order_to_printer, sync_print_jobs
+from apps.printing.services import (
+    printable_files, submit_order_to_printer, sync_print_jobs, unprintable_files,
+)
 
-from .models import Order, OrderFile, PrintSpecification
+from .models import (
+    PRINTABLE_EXTENSIONS, Order, OrderFile, OrderStatusHistory, PrintSpecification,
+    format_page_selection,
+)
 from .serializers import AdminOrderSerializer, GuestContactSerializer, OrderSerializer, PrintSpecificationSerializer
-from .services.file_edits import FileEditError, apply_edit, count_pages
+from .services.document_preview import PreviewError, build_preview
+from .services.file_edits import FileEditError, apply_edit, count_pages, select_pages
 
 User = get_user_model()
 
@@ -246,11 +252,28 @@ class OrderFileEditView(APIView):
         return Response(OrderSerializer(order).data)
 
 
+def _file_read(field) -> bytes:
+    field.open("rb")
+    try:
+        return field.read()
+    finally:
+        field.close()
+
+
 class OrderFilePreviewView(APIView):
+    """Stream an uploaded file back for preview or download.
+
+    ``?variant=`` picks which revision to serve — ``original`` (what the client
+    uploaded), ``edited`` (after the client's crop/split/resize) or ``final``
+    (after the admin's page selection). Documents are served as-is here and
+    rendered through ``OrderFileTextPreviewView`` instead.
+    """
+
     permission_classes = [permissions.AllowAny]
 
+    VARIANTS = ("edited", "original", "final")
+
     def get(self, request, order_pk, file_pk):
-        """Inline preview; guests must present the tracking ID as a query param."""
         order = get_object_or_404(Order, pk=order_pk)
         order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
         user = request.user if request.user.is_authenticated else None
@@ -259,12 +282,63 @@ class OrderFilePreviewView(APIView):
                 return Response({"detail": "Not allowed."}, status=403)
         elif request.query_params.get("tracking_id") != order.tracking_id:
             return Response({"detail": "Not allowed."}, status=403)
+
         variant = request.query_params.get("variant", "edited")
-        field = order_file.edited_file if variant == "edited" and order_file.edited_file else order_file.file
-        field.open("rb")
-        response = FileResponse(field, content_type=order_file.content_type or "application/octet-stream")
-        response["Content-Disposition"] = f'inline; filename="{order_file.file_name}"'
+        if variant not in self.VARIANTS:
+            return Response({"detail": f"Unknown variant '{variant}'."}, status=400)
+        if variant == "original":
+            field, content_type, name = order_file.file, order_file.content_type, order_file.file_name
+        elif variant == "final":
+            field = order_file.final_file or order_file.print_file
+            content_type = order_file.print_content_type
+            name = order_file.print_file_name
+        else:
+            field = order_file.edited_file or order_file.file
+            content_type = order_file.print_content_type
+            name = order_file.print_file_name
+
+        if not field:
+            return Response({"detail": "That version of the file does not exist."}, status=404)
+
+        disposition = "attachment" if request.query_params.get("download") == "1" else "inline"
+        response = FileResponse(
+            field, content_type=content_type or "application/octet-stream",
+            filename=name if disposition == "attachment" else None,
+            as_attachment=disposition == "attachment",
+        )
+        if disposition == "inline":
+            response["Content-Disposition"] = f'inline; filename="{name}"'
         return response
+
+
+class OrderFileTextPreviewView(APIView):
+    """Extracted contents of a Word/Excel/PowerPoint/text upload.
+
+    Browsers cannot render these formats natively, so the server pulls the text
+    out of the container and returns a structured payload the UI displays.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, order_pk, file_pk):
+        order = get_object_or_404(Order, pk=order_pk)
+        order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
+        user = request.user if request.user.is_authenticated else None
+        if order.user:
+            if user != order.user and not (user and user.is_shop_admin):
+                return Response({"detail": "Not allowed."}, status=403)
+        elif request.query_params.get("tracking_id") != order.tracking_id:
+            return Response({"detail": "Not allowed."}, status=403)
+
+        try:
+            preview = build_preview(order_file.file_name, _file_read(order_file.file))
+        except PreviewError as exc:
+            return Response({"detail": str(exc)}, status=415)
+        return Response({
+            **preview.as_dict(),
+            "file_name": order_file.file_name,
+            "page_count": order_file.page_count,
+        })
 
 
 def _status_label(status_value: str) -> str:
@@ -275,15 +349,36 @@ def _status_label(status_value: str) -> str:
 
 
 class TrackOrderView(APIView):
-    """Guest-safe status tracking: tracking ID + contact match (PRD §4.1 #9)."""
+    """Guest-safe status tracking: tracking ID + contact match (PRD §4.1 #9).
+
+    The tracking ID alone is not enough — anybody who guesses or copies it must
+    not be able to read someone else's order, so a guest also has to present the
+    email/phone/Facebook handle used when the order was placed. Signed-in owners
+    and staff skip that second step because the JWT already proves ownership.
+    """
 
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, tracking_id: str):
-        order = Order.objects.filter(tracking_id=tracking_id.upper()).first()
-        contact = request.query_params.get("contact", "")
-        if not order or not order.contact_matches(contact):
-            return Response({"detail": "No order found for that tracking ID and contact."}, status=404)
+        code = tracking_id.strip().upper().replace(" ", "")
+        if not code:
+            return Response({"detail": "Enter a tracking ID."}, status=400)
+        order = Order.objects.filter(tracking_id=code).first()
+        if not order:
+            return Response({"detail": f"No order found with tracking ID {code}."}, status=404)
+
+        user = request.user if request.user.is_authenticated else None
+        owned = bool(user) and (order.user_id == user.id or user.is_shop_admin)
+        if not owned and not order.contact_matches(request.query_params.get("contact", "")):
+            return Response(
+                {"detail": (
+                    "That contact does not match this order. Enter the exact email, "
+                    "phone number or Facebook name used when you placed it, or "
+                    "sign in to the account that owns the order."
+                )},
+                status=403,
+            )
+
         return Response({
             "id": order.id,
             "tracking_id": order.tracking_id,
@@ -293,6 +388,7 @@ class TrackOrderView(APIView):
             "subtotal_peso": order.subtotal / 100,
             "amount_paid_peso": order.amount_paid / 100,
             "balance_due_peso": order.balance_due / 100,
+            "reprint_count": order.reprint_count,
             "files": [{"id": f.id, "file_name": f.file_name, "page_count": f.page_count,
                        "file_type": f.file_type} for f in order.files.all()],
             "history": [
@@ -339,18 +435,25 @@ class AdminOrderDetailView(APIView):
 
 
 class AdminOrderActionView(APIView):
-    """Approve / Reject / Request Revision / Hold / Ready / Complete / Cancel."""
+    """Approve / Reject / Request Revision / Hold / Reprint / Ready / Complete / Cancel."""
 
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     ALLOWED = {
         "approve": {Order.Status.PENDING_REVIEW},
-        "reject": {Order.Status.PENDING_REVIEW, Order.Status.AWAITING_PAYMENT, Order.Status.ON_HOLD},
+        "reject": {Order.Status.PENDING_REVIEW, Order.Status.AWAITING_PAYMENT, Order.Status.ON_HOLD,
+                   Order.Status.PRINT_CANCELLED},
         "request_revision": {Order.Status.PENDING_REVIEW},
         "hold": {Order.Status.PRINTING, Order.Status.APPROVED_QUEUED},
         "resolve_hold": {Order.Status.ON_HOLD},
-        "ready": {Order.Status.PRINTING, Order.Status.ON_HOLD, Order.Status.APPROVED_QUEUED},
+        "ready": {Order.Status.PRINTING, Order.Status.ON_HOLD, Order.Status.APPROVED_QUEUED,
+                  Order.Status.PRINT_CANCELLED},
         "complete": {Order.Status.PRINTED_READY},
+        # Reprint is the recovery path for anything that already reached the
+        # printer — bad output, a jam, or a job the printer cancelled itself.
+        "reprint": {Order.Status.ON_HOLD, Order.Status.APPROVED_QUEUED, Order.Status.PRINTING,
+                    Order.Status.PRINTED_READY, Order.Status.PRINT_CANCELLED,
+                    Order.Status.COMPLETED},
         "cancel": {Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT, Order.Status.PENDING_REVIEW,
                    Order.Status.APPROVED_QUEUED, Order.Status.ON_HOLD, Order.Status.REVISION_REQUESTED},
         "record_payment": {Order.Status.AWAITING_PAYMENT, Order.Status.PENDING_REVIEW,
@@ -371,6 +474,13 @@ class AdminOrderActionView(APIView):
         from apps.payments.services import refund_order
 
         if action == "approve":
+            blocked = unprintable_files(order)
+            if blocked:
+                return Response({"detail": (
+                    "Convert these to PDF (or replace them) before approving: "
+                    + ", ".join(f.file_name for f in blocked)
+                    + ". The printer only accepts PDF and image files."
+                )}, status=409)
             order.set_status(Order.Status.APPROVED_QUEUED, note=note, actor=request.user)
             submit_order_to_printer(order)
             order.refresh_from_db()
@@ -379,6 +489,10 @@ class AdminOrderActionView(APIView):
                 order.set_status(Order.Status.ON_HOLD,
                                  note=f"All print jobs failed to submit: {failed[0].error_message}",
                                  actor=request.user)
+        elif action == "reprint":
+            response = self._reprint(request, order, note)
+            if response is not None:
+                return response
         elif action == "reject":
             order.set_status(Order.Status.REJECTED, note=note, actor=request.user)
             refund_order(order, reason="rejected_by_shop")
@@ -408,6 +522,56 @@ class AdminOrderActionView(APIView):
             order.refresh_from_db()
         return Response(AdminOrderSerializer(order).data)
 
+    def _reprint(self, request, order: Order, note: str):
+        """Send the order to the printer again.
+
+        The previous run is kept intact (jobs, history, reprint count) so the
+        admin can still see what went wrong; a fresh set of Epson jobs is
+        created and tagged as a reprint. Optionally scoped to a single file via
+        ``file_id`` — that is how you recover just the sheet the printer
+        cancelled without wasting paper on the ones that printed fine.
+        """
+        blocked = unprintable_files(order)
+        if blocked:
+            return Response({"detail": (
+                "Convert these to PDF (or replace them) before reprinting: "
+                + ", ".join(f.file_name for f in blocked)
+            )}, status=409)
+
+        order_file_ids = request.data.get("file_ids") or []
+        if isinstance(order_file_ids, str):
+            order_file_ids = [order_file_ids]
+        if not order_file_ids:
+            single = request.data.get("file_id")
+            order_file_ids = [single] if single else []
+        if not printable_files(order):
+            return Response({"detail": "This order has no printable files."}, status=409)
+
+        targets = None
+        if order_file_ids:
+            targets = list(order.files.filter(pk__in=order_file_ids))
+            if not targets:
+                return Response({"detail": "No matching files on this order."}, status=404)
+        jobs = submit_order_to_printer(order, reprint=True, order_files=targets)
+        order.refresh_from_db()
+
+        order.reprint_count += 1
+        order.save(update_fields=["reprint_count"])
+        failed = [j for j in jobs if j.status == "failed"]
+        summary = note or f"Reprint #{order.reprint_count} sent to the printer"
+        if failed:
+            summary += f" — {len(failed)} job(s) failed to submit"
+
+        # A reprint always puts the order back into the flow; if every job
+        # failed to submit it lands on hold instead.
+        order.set_status(
+            Order.Status.ON_HOLD if failed and len(failed) == len(jobs)
+            else Order.Status.APPROVED_QUEUED,
+            note=summary,
+            actor=request.user,
+        )
+        return None
+
 
 class AdminOrderSpecView(APIView):
     """Admin correction of ambiguous print parameters (PRD §4.2 #3)."""
@@ -422,6 +586,118 @@ class AdminOrderSpecView(APIView):
         serializer.save()
         order.subtotal = compute_quote(order.quote_specs()).subtotal
         order.save(update_fields=["subtotal"])
+        return Response(AdminOrderSerializer(order).data)
+
+
+class AdminOrderNotesView(APIView):
+    """Save the order's internal notes (never shown to the client)."""
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def patch(self, request, pk):
+        order = get_object_or_404(Order, pk=pk)
+        order.admin_notes = request.data.get("admin_notes", "")
+        order.save(update_fields=["admin_notes"])
+        return Response(AdminOrderSerializer(order).data)
+
+
+class AdminOrderFilePagesView(APIView):
+    """Admin page selection — "which pages of this file should be printed?".
+
+    Epson Connect has no page-range parameter, so the chosen pages are written
+    into a trimmed ``final_file`` that is uploaded to the printer instead of the
+    original. The order is re-quoted from the surviving pages so the customer is
+    only charged for what actually comes out of the printer.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def patch(self, request, order_pk, file_pk):
+        order = get_object_or_404(Order, pk=order_pk)
+        order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
+
+        if order_file.file_type != OrderFile.FileType.PDF:
+            return Response({"detail": "Page selection only applies to PDF files."}, status=400)
+
+        raw = request.data.get("pages", request.data.get("page_selection"))
+        if raw is None:
+            return Response({"detail": "Send a 'pages' array of page numbers."}, status=400)
+        try:
+            pages = [int(page) for page in raw]
+        except (TypeError, ValueError):
+            return Response({"detail": "Pages must be numbers."}, status=400)
+
+        try:
+            selected = select_pages(order_file, pages)
+        except FileEditError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        order.refresh_from_db()
+        order.subtotal = compute_quote(order.quote_specs()).subtotal
+        order.save(update_fields=["subtotal"])
+        return Response({
+            "order": AdminOrderSerializer(order).data,
+            "selected_pages": selected,
+            "label": order_file.page_selection_label,
+        })
+
+
+class AdminOrderFileReplaceView(APIView):
+    """Swap an un-printable upload (e.g. a .docx) for a converted PDF.
+
+    The original is kept for the audit trail; ``final_file`` becomes the new
+    print-ready version, so the admin can convert the document in Word (or
+    Google Docs) and release the order without asking the customer again.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, order_pk, file_pk):
+        order = get_object_or_404(Order, pk=order_pk)
+        order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"detail": "Attach a file under the 'file' field."}, status=400)
+        extension = upload.name.rsplit(".", 1)[-1].lower()
+        if extension not in PRINTABLE_EXTENSIONS:
+            return Response({"detail": (
+                f"'{upload.name}' cannot be sent to the printer. Upload a PDF or an image."
+            )}, status=400)
+        if upload.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+            return Response({"detail": f"File exceeds the {settings.MAX_UPLOAD_MB}MB limit."}, status=400)
+
+        order_file.file_type = (OrderFile.FileType.PDF if extension == "pdf"
+                                else OrderFile.FileType.IMAGE)
+        order_file.content_type = upload.content_type or ""
+        order_file.size = upload.size
+        order_file.replaced_by_admin = True
+        # The conversion replaces the document, so drop the stale page selection
+        # and rebuild the page count from the new file.
+        order_file.page_selection = []
+        if order_file.edited_file:
+            order_file.edited_file.delete(save=False)
+            order_file.edited_file = None
+        if order_file.final_file:
+            order_file.final_file.delete(save=False)
+        order_file.final_file.save(upload.name, upload, save=False)
+        order_file.save()
+
+        content = _file_read(order_file.final_file)
+        try:
+            order_file.page_count = count_pages(order_file.file_type, content)
+        except FileEditError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        order_file.save(update_fields=["page_count"])
+
+        order.refresh_from_db()
+        order.subtotal = compute_quote(order.quote_specs()).subtotal
+        order.save(update_fields=["subtotal"])
+        OrderStatusHistory.objects.create(
+            order=order, from_status=order.status, to_status=order.status,
+            note=f"Shop replaced '{order_file.file_name}' with a converted PDF",
+            actor=request.user,
+        )
         return Response(AdminOrderSerializer(order).data)
 
 

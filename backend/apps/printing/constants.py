@@ -84,10 +84,13 @@ EPSON_STATUS_TO_ORDER_STATUS = {
     "media_jam": "on_hold",
     "marker_supply_empty": "on_hold",
     "stopped_other": "on_hold",
-    "canceled": "cancelled",
+    # The printer cancelled the job itself (cancelled in the Epson queue,
+    # expired, or stopped locally). This is NOT an order cancellation — the
+    # shop reprints it, so it maps to its own recoverable status.
+    "canceled": "print_cancelled",
     "error_occurred": "on_hold",
     "completed": "printed_ready",
-    "expired": "on_hold",
+    "expired": "print_cancelled",
 }
 
 # Friendly client-facing descriptions for Epson job statuses
