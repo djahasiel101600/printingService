@@ -37,22 +37,12 @@ export default function App() {
               <Route path="/epson/callback" element={<EpsonCallbackPage />} />
               <Route path="/order" element={<NewOrderPage />} />
               <Route path="/track" element={<TrackOrderPage />} />
-              <Route
-                path="/orders"
-                element={
-                  <RequireAuth>
-                    <MyOrdersPage />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/orders/:id"
-                element={
-                  <RequireAuth>
-                    <OrderDetailPage />
-                  </RequireAuth>
-                }
-              />
+              {/* My Orders serves both signed-in users (their account orders)
+                  and guests (orders saved on this device), so no RequireAuth. */}
+              <Route path="/orders" element={<MyOrdersPage />} />
+              {/* No RequireAuth: guests who just placed an order open their
+                  confirmation page by proving ownership with the tracking ID. */}
+              <Route path="/orders/:id" element={<OrderDetailPage />} />
               <Route
                 path="/admin"
                 element={
@@ -66,6 +56,14 @@ export default function App() {
                 element={
                   <RequireAuth adminOnly>
                     <AdminSettingsPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/admin/orders/new"
+                element={
+                  <RequireAuth adminOnly>
+                    <NewOrderPage adminMode />
                   </RequireAuth>
                 }
               />

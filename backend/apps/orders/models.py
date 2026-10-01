@@ -34,6 +34,11 @@ class Order(models.Model):
         FULL = "full", "Full payment"
         PARTIAL = "partial", "Partial / down payment"
 
+    class PaymentMethod(models.TextChoices):
+        QRPH = "qrph", "QR Ph (online)"
+        PICKUP = "pickup", "Pay upon pickup"
+        CASH = "cash", "Cash / recorded at the shop"
+
     class ContactMethod(models.TextChoices):
         EMAIL = "email", "Email"
         PHONE = "phone", "Phone"
@@ -51,6 +56,9 @@ class Order(models.Model):
 
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
     payment_type = models.CharField(max_length=16, choices=PaymentType.choices, blank=True)
+    # How the customer chose to settle the bill: QR Ph checkout, pay upon
+    # pickup, or a payment recorded by staff at the counter.
+    payment_method = models.CharField(max_length=16, choices=PaymentMethod.choices, blank=True)
 
     subtotal = models.PositiveIntegerField(default=0, help_text="Centavos")
     amount_paid = models.PositiveIntegerField(default=0, help_text="Centavos")

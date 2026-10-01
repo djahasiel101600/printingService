@@ -273,3 +273,243 @@ class CapabilitiesViewTests(TestCase):
         self.assertIn("colorModes", body)
         sizes = [entry["paperSize"] for entry in body["paperSizes"]]
         self.assertIn("ps_a4", sizes)
+
+
+class OrderFlowRegressionTests(TestCase):
+    """Customer -> confirmation -> My Orders -> Admin, both as guest and as a
+    logged-in user, including the pay-on-pickup option and admin tooling."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client_api = APIClient()
+        PriceRule.objects.create(media_size="ps_a4", media_type="pt_plainpaper",
+                                 color_mode="mono", print_quality="normal", price_per_page=300)
+
+    # ------------------------------------------------------------- helpers
+    def _create_guest_order(self) -> dict:
+        response = self.client_api.post("/api/orders/", {
+            "files": [SimpleUploadedFile("notes.pdf", make_pdf(3), content_type="application/pdf")],
+            "guest_name": "Juan Dela Cruz",
+            "guest_contact_method": "email",
+            "guest_contact_value": "juan@example.com",
+            "spec": json.dumps({"media_size": "ps_a4", "media_type": "pt_plainpaper",
+                                "color_mode": "mono", "print_quality": "normal",
+                                "sides": "none", "copies": 2}),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def _admin_client(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        User.objects.get_or_create(
+            username="admin@print.local", email="admin@print.local",
+            defaults={"first_name": "Shop", "last_name": "Admin",
+                      "role": User.Role.ADMIN, "is_staff": True, "is_superuser": True},
+        )
+        admin = APIClient()
+        user = User.objects.get(email="admin@print.local")
+        user.set_password("admin1234")
+        user.save()
+        login = admin.post("/api/auth/token/", {
+            "email": "admin@print.local", "password": "admin1234"}, format="json")
+        self.assertEqual(login.status_code, 200, login.content)
+        admin.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+        return admin
+
+    # ------------------------------------------------- serialization (bug)
+    def test_peso_fields_always_serialized(self):
+        payload = self._create_guest_order()
+        order = payload["order"]
+        self.assertEqual(order["subtotal_peso"], 18.0)
+        self.assertEqual(order["amount_paid_peso"], 0.0)
+        self.assertEqual(order["balance_due_peso"], 18.0)
+        self.assertIn("min_partial_peso", order)
+        self.assertIn("payment_method", order)
+
+        # The admin list used to drop subtotal_peso entirely (blank page crash).
+        admin = self._admin_client()
+        listed = admin.get("/api/admin/orders/")
+        self.assertEqual(listed.status_code, 200)
+        self.assertTrue(len(listed.json()) > 0)
+        for entry in listed.json():
+            self.assertIn("subtotal_peso", entry)
+            self.assertIn("balance_due_peso", entry)
+
+    # ------------------------------------------- guest order confirmation
+    def test_guest_order_detail_requires_tracking_proof(self):
+        payload = self._create_guest_order()
+        order_id, tracking_id = payload["order"]["id"], payload["order"]["tracking_id"]
+
+        denied = self.client_api.get(f"/api/orders/{order_id}/")
+        self.assertEqual(denied.status_code, 403)
+
+        wrong = self.client_api.get(f"/api/orders/{order_id}/", {"tracking_id": "PSP-XXXX-XXXX"})
+        self.assertEqual(wrong.status_code, 403)
+
+        ok = self.client_api.get(f"/api/orders/{order_id}/", {"tracking_id": tracking_id})
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["tracking_id"], tracking_id)
+
+    def test_track_result_includes_order_id(self):
+        payload = self._create_guest_order()
+        response = self.client_api.get(
+            f"/api/track/{payload['order']['tracking_id']}/", {"contact": "juan@example.com"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], payload["order"]["id"])
+
+    # ------------------------------------------------------- pay on pickup
+    def test_pay_on_pickup_submits_straight_to_review(self):
+        payload = self._create_guest_order()
+        order_id = payload["order"]["id"]
+
+        response = self.client_api.post("/api/payments/checkout/", {
+            "order_id": order_id, "method": "pickup",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["method"], "pickup")
+
+        order = Order.objects.get(pk=order_id)
+        self.assertEqual(order.status, Order.Status.PENDING_REVIEW)
+        self.assertEqual(order.payment_method, Order.PaymentMethod.PICKUP)
+        self.assertEqual(order.payments.count(), 0)
+        self.assertEqual(order.balance_due, 1800)
+
+        # Admin sees it in the review queue (guest orders stay traceable).
+        admin = self._admin_client()
+        queue = admin.get("/api/admin/orders/", {"status": "pending_review"})
+        self.assertTrue(any(o["id"] == order_id for o in queue.json()))
+
+    def test_admin_can_disable_pay_on_pickup(self):
+        # Anonymous writers are rejected.
+        anon = self.client_api.put("/api/payments/settings/",
+                                   {"allow_pay_on_pickup": False}, format="json")
+        self.assertIn(anon.status_code, (401, 403))
+
+        admin = self._admin_client()
+        put = admin.put("/api/payments/settings/", {"allow_pay_on_pickup": False}, format="json")
+        self.assertEqual(put.status_code, 200, put.content)
+        self.assertFalse(put.json()["allow_pay_on_pickup"])
+
+        # Public read reflects the toggle for the checkout UI.
+        settings_view = self.client_api.get("/api/payments/settings/")
+        self.assertEqual(settings_view.status_code, 200)
+        self.assertFalse(settings_view.json()["allow_pay_on_pickup"])
+
+        payload = self._create_guest_order()
+        blocked = self.client_api.post("/api/payments/checkout/", {
+            "order_id": payload["order"]["id"], "method": "pickup",
+        }, format="json")
+        self.assertEqual(blocked.status_code, 400, blocked.content)
+
+        # QR Ph checkout still works while pickup is disabled.
+        qr = self.client_api.post("/api/payments/checkout/", {
+            "order_id": payload["order"]["id"], "payment_type": "full",
+        }, format="json")
+        self.assertEqual(qr.status_code, 201, qr.content)
+        self.assertEqual(qr.json()["method"], "qrph")
+
+    def test_record_payment_closes_out_pickup_order(self):
+        payload = self._create_guest_order()
+        order_id = payload["order"]["id"]
+        self.client_api.post("/api/payments/checkout/", {
+            "order_id": order_id, "method": "pickup",
+        }, format="json")
+
+        admin = self._admin_client()
+        record = admin.post(f"/api/admin/orders/{order_id}/actions/record_payment/",
+                            {}, format="json")
+        self.assertEqual(record.status_code, 200, record.content)
+
+        order = Order.objects.get(pk=order_id)
+        self.assertEqual(order.amount_paid, order.subtotal)
+        self.assertEqual(order.balance_due, 0)
+        cash = order.payments.filter(method="cash", status=Payment.Status.PAID)
+        self.assertEqual(cash.count(), 1)
+
+        # Nothing left to collect -> conflict.
+        again = admin.post(f"/api/admin/orders/{order_id}/actions/record_payment/",
+                           {}, format="json")
+        self.assertEqual(again.status_code, 409)
+
+    # --------------------------------------------- admin creating orders
+    def test_admin_creates_order_for_walk_in_customer(self):
+        admin = self._admin_client()
+        response = admin.post("/api/orders/", {
+            "files": [SimpleUploadedFile("walkin.pdf", make_pdf(2), content_type="application/pdf")],
+            "guest_name": "Maria Santos",
+            "guest_contact_method": "phone",
+            "guest_contact_value": "09171234567",
+            "spec": json.dumps({"media_size": "ps_a4", "media_type": "pt_plainpaper",
+                                "color_mode": "mono", "print_quality": "normal",
+                                "sides": "none", "copies": 1}),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.content)
+        order = response.json()["order"]
+        self.assertIsNone(Order.objects.get(pk=order["id"]).user)
+        self.assertEqual(order["guest_name"], "Maria Santos")
+        self.assertEqual(order["client_name"], "Maria Santos")
+
+        # Traceable in the admin queue by customer name.
+        listed = admin.get("/api/admin/orders/", {"search": "Maria"})
+        self.assertTrue(any(o["id"] == order["id"] for o in listed.json()))
+
+    def test_admin_creates_order_linked_to_registered_customer(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        customer = User.objects.create_user(
+            username="marie@example.com", email="marie@example.com",
+            first_name="Marie", last_name="Cruz", role=User.Role.CLIENT,
+        )
+        customer.set_password("mariepass1")
+        customer.save()
+
+        admin = self._admin_client()
+        response = admin.post("/api/orders/", {
+            "files": [SimpleUploadedFile("linked.pdf", make_pdf(1), content_type="application/pdf")],
+            "customer_user_id": str(customer.id),
+            "spec": json.dumps({"media_size": "ps_a4", "media_type": "pt_plainpaper",
+                                "color_mode": "mono", "print_quality": "normal",
+                                "sides": "none", "copies": 1}),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.content)
+        order = response.json()["order"]
+        self.assertEqual(Order.objects.get(pk=order["id"]).user_id, customer.id)
+        self.assertEqual(order["client_name"], "Marie Cruz")
+
+        # The customer sees it in their own My Orders.
+        client = APIClient()
+        login = client.post("/api/auth/token/", {
+            "email": "marie@example.com", "password": "mariepass1"}, format="json")
+        self.assertEqual(login.status_code, 200, login.content)
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+        mine = client.get("/api/orders/mine/")
+        self.assertEqual(mine.status_code, 200)
+        self.assertTrue(any(o["id"] == order["id"] for o in mine.json()))
+
+    def test_admin_customer_search_endpoint(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        User.objects.create_user(
+            username="unique-search@example.com", email="unique-search@example.com",
+            first_name="Zedrick", last_name="Quinto", role=User.Role.CLIENT,
+        )
+        admin = self._admin_client()
+        found = admin.get("/api/admin/customers/", {"search": "Zedrick"})
+        self.assertEqual(found.status_code, 200)
+        self.assertTrue(any(c["email"] == "unique-search@example.com" for c in found.json()))
+
+        # Admins never show up as order targets.
+        emails = [c["email"] for c in found.json()]
+        self.assertNotIn("admin@print.local", emails)
+
+        anonymous = APIClient().get("/api/admin/customers/")
+        self.assertIn(anonymous.status_code, (401, 403))
+

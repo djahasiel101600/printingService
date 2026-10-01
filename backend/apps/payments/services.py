@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.orders.models import Order
 
-from .models import Payment
+from .models import Payment, PaymentSettings
 from .paymongo import PayMongoClient, PayMongoError
 
 log = logging.getLogger(__name__)
@@ -62,10 +62,66 @@ def create_checkout(order: Order, payment_type: str) -> Payment:
         raw_response={"attach": attached},
     )
     order.payment_type = payment_type
+    order.payment_method = Order.PaymentMethod.QRPH
     if order.status == Order.Status.DRAFT:
         order.set_status(Order.Status.AWAITING_PAYMENT, note="QR Ph checkout generated")
-    order.save(update_fields=["payment_type", "status"])
+    order.save(update_fields=["payment_type", "payment_method", "status"])
     return payment
+
+
+def choose_pay_on_pickup(order: Order) -> None:
+    """Customer opts to settle the balance when collecting the printout.
+
+    The order moves straight into the review queue — nothing is collected now,
+    so staff simply cash it in later via the `record_payment` admin action.
+    """
+    if not PaymentSettings.get_solo().allow_pay_on_pickup:
+        raise PayMongoError("Pay upon pickup is currently disabled by the shop.")
+    order.payment_method = Order.PaymentMethod.PICKUP
+    if order.status in (Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT):
+        balance = order.balance_due
+        order.set_status(
+            Order.Status.PENDING_REVIEW,
+            note=f"Customer chose to pay upon pickup; balance PHP {balance / 100:.2f} due on collection",
+        )
+    else:
+        order.save(update_fields=["payment_method"])
+
+
+def record_manual_payment(order: Order, actor=None) -> int:
+    """Record a payment collected at the shop (cash or scanned QR Ph at pickup).
+
+    Returns the amount recorded in centavos (0 when there is nothing due).
+    """
+    amount = order.balance_due
+    if amount <= 0:
+        return 0
+    Payment.objects.create(
+        order=order,
+        payment_id=f"manual_{order.id}_{timezone.now().strftime('%Y%m%d%H%M%S')}",
+        amount=amount,
+        method="cash",
+        status=Payment.Status.PAID,
+        paid_at=timezone.now(),
+        raw_response={"recorded_by": getattr(actor, "email", "") or "staff"},
+    )
+    old_status = order.status
+    order.amount_paid = min(order.subtotal, order.amount_paid + amount)
+    if not order.payment_method:
+        order.payment_method = Order.PaymentMethod.CASH
+    order.save(update_fields=["amount_paid", "payment_method"])
+
+    note = f"Payment of PHP {amount / 100:.2f} recorded at the shop"
+    if old_status in (Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT):
+        order.set_status(Order.Status.PENDING_REVIEW, note=note, actor=actor)
+    else:
+        from apps.orders.models import OrderStatusHistory
+
+        OrderStatusHistory.objects.create(
+            order=order, from_status=old_status, to_status=old_status,
+            note=note, actor=actor if getattr(actor, "is_authenticated", False) else None,
+        )
+    return amount
 
 
 def mark_payment_paid(payment: Payment, paymongo_payment_id: str = "") -> None:

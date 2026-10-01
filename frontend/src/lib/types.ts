@@ -80,12 +80,14 @@ export interface Order {
   status: OrderStatus;
   status_display: string;
   payment_type: string;
+  payment_method: "" | "qrph" | "pickup" | "cash";
   client_name: string;
   guest_name: string;
   guest_contact_method: string;
   guest_contact_value: string;
   subtotal: number;
   subtotal_peso: number;
+  min_partial_peso: number;
   amount_paid: number;
   amount_paid_peso: number;
   balance_due: number;
@@ -176,6 +178,7 @@ export interface PriceRule {
 }
 
 export interface TrackResult {
+  id: number;
   tracking_id: string;
   status: OrderStatus;
   status_display: string;
@@ -187,4 +190,31 @@ export interface TrackResult {
   history: { to_status: OrderStatus; to_status_display: string; note: string; created_at: string }[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ShopPaymentSettings {
+  allow_pay_on_pickup: boolean;
+  updated_at?: string;
+}
+
+export interface CheckoutResponse {
+  method: "qrph" | "pickup";
+  detail?: string;
+  payment_id?: number;
+  amount?: number;
+  amount_peso?: number;
+  payment_type?: string;
+  qr_image_url?: string;
+  expires_at?: string | null;
+  status?: string;
+  mock_mode?: boolean;
+  order?: Order;
+}
+
+export interface CustomerOption {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
 }

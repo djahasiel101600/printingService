@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  Wallet,
   XCircle,
 } from "lucide-react";
 
@@ -20,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { api, apiErrorMessage } from "@/lib/api";
-import type { EpsonAuthUrl, EpsonStatus } from "@/lib/types";
+import type { EpsonAuthUrl, EpsonStatus, ShopPaymentSettings } from "@/lib/types";
 
 interface TestResult {
   mock_mode?: boolean;
@@ -81,6 +82,21 @@ export default function AdminSettingsPage() {
     mutationFn: async () => {
       const { data } = await api.post<TestResult>("/admin/paymongo/test-connection/", { mock_mode: paymongoMockMode });
       return data;
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  const { data: paymentSettings, isLoading: paymentSettingsLoading } = useQuery({
+    queryKey: ["payment-settings"],
+    queryFn: async () => (await api.get<ShopPaymentSettings>("/payments/settings/")).data,
+  });
+
+  const paymentSettingsMutation = useMutation({
+    mutationFn: async (allowPayOnPickup: boolean) =>
+      (await api.put<ShopPaymentSettings>("/payments/settings/", { allow_pay_on_pickup: allowPayOnPickup })).data,
+    onSuccess: () => {
+      toast.success("Payment option updated.");
+      queryClient.invalidateQueries({ queryKey: ["payment-settings"] });
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
   });
@@ -281,6 +297,38 @@ export default function AdminSettingsPage() {
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5" />
+            Checkout options
+          </CardTitle>
+          <CardDescription>Choose how customers can settle their orders.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-md border p-3">
+            <div>
+              <Label className="text-base">Allow "Pay upon pickup"</Label>
+              <p className="text-sm text-muted-foreground">
+                Let customers skip online payment and pay the balance when they collect their printout.
+                QR Ph remains available either way.
+              </p>
+            </div>
+            <Switch
+              checked={paymentSettings?.allow_pay_on_pickup ?? false}
+              onCheckedChange={(checked) => paymentSettingsMutation.mutate(checked)}
+              disabled={paymentSettingsLoading || paymentSettingsMutation.isPending || !paymentSettings}
+            />
+          </div>
+          <Alert>
+            <AlertDescription>
+              When enabled, customers choosing pay upon pickup go straight to your review queue, and
+              you can record their payment from the order page when they collect.
+            </AlertDescription>
+          </Alert>
         </CardContent>
       </Card>
     </div>

@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, apiErrorMessage } from "@/lib/api";
 import type { Order } from "@/lib/types";
 
-type AdminAction = "approve" | "reject" | "request_revision" | "hold" | "resolve_hold" | "ready" | "complete" | "cancel";
+type AdminAction = "approve" | "reject" | "request_revision" | "hold" | "resolve_hold" | "ready" | "complete" | "cancel" | "record_payment";
 
 const ACTION_LABELS: Record<AdminAction, string> = {
   approve: "Approve & Queue",
@@ -25,6 +25,7 @@ const ACTION_LABELS: Record<AdminAction, string> = {
   ready: "Mark Ready for Pickup",
   complete: "Mark Completed",
   cancel: "Cancel Order",
+  record_payment: "Record Payment",
 };
 
 export default function AdminOrderDetailPage() {
@@ -60,6 +61,8 @@ export default function AdminOrderDetailPage() {
 
   const availableActions: AdminAction[] = (() => {
     switch (order.status) {
+      case "draft": return ["cancel"];
+      case "awaiting_payment": return ["reject", "cancel"];
       case "pending_review": return ["approve", "reject", "request_revision"];
       case "approved_queued": return ["hold", "cancel"];
       case "on_hold": return ["resolve_hold", "cancel"];
@@ -69,6 +72,17 @@ export default function AdminOrderDetailPage() {
       default: return [];
     }
   })();
+
+  const showRecordPayment =
+    order.balance_due_peso > 0 && !["rejected", "cancelled"].includes(order.status);
+
+  const paymentMethodLabel = order.payment_method
+    ? order.payment_method === "qrph"
+      ? "QR Ph"
+      : order.payment_method === "pickup"
+        ? "Pay upon pickup"
+        : "Recorded at shop"
+    : "";
 
   return (
     <div className="space-y-6">
@@ -96,6 +110,50 @@ export default function AdminOrderDetailPage() {
           <CardContent><p className="text-xl font-bold">₱{order.balance_due_peso.toFixed(2)}</p></CardContent>
         </Card>
       </div>
+
+      {(order.payments.length > 0 || showRecordPayment || paymentMethodLabel) && (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base">Payments</CardTitle>
+            {paymentMethodLabel && (
+              <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium">{paymentMethodLabel}</span>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {order.payments.length > 0 && (
+              <ul className="space-y-2 text-sm">
+                {order.payments.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
+                    <span className="capitalize">
+                      {p.method === "qrph" ? "QR Ph" : p.method} · {p.status}
+                      {p.paid_at && ` · paid ${new Date(p.paid_at).toLocaleString()}`}
+                    </span>
+                    <span className="font-medium">₱{(p.amount / 100).toFixed(2)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {showRecordPayment && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                <span className="text-amber-800">
+                  Balance due: <strong>₱{order.balance_due_peso.toFixed(2)}</strong>
+                  {order.payment_method === "pickup" && " — collect on pickup"}
+                </span>
+                <Button
+                  size="sm"
+                  onClick={() => actionMutation.mutate("record_payment")}
+                  disabled={actionMutation.isPending}
+                >
+                  Record ₱{order.balance_due_peso.toFixed(2)} received
+                </Button>
+              </div>
+            )}
+            {!showRecordPayment && order.amount_paid_peso > 0 && order.balance_due_peso === 0 && (
+              <p className="text-sm text-green-700">Fully paid — nothing to collect.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Files ({order.files.length})</CardTitle></CardHeader>

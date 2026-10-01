@@ -4,6 +4,41 @@ export const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000/ap
 
 export const TOKEN_KEY = "printservice.token";
 
+/**
+ * Orders created without an account are remembered on this device so the
+ * customer can reopen their confirmation page and view "My Orders" without
+ * signing in. Each entry carries the tracking ID used as ownership proof.
+ */
+export interface GuestOrderRef {
+  id: number;
+  tracking_id: string;
+  created_at: string;
+}
+
+const GUEST_ORDERS_KEY = "printservice.guest-orders";
+
+export function loadGuestOrders(): GuestOrderRef[] {
+  try {
+    const raw = localStorage.getItem(GUEST_ORDERS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as GuestOrderRef[]) : [];
+    return Array.isArray(parsed) ? parsed.filter((o) => o && typeof o.id === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveGuestOrder(ref: GuestOrderRef): GuestOrderRef[] {
+  const next = [ref, ...loadGuestOrders().filter((o) => o.id !== ref.id)].slice(0, 50);
+  localStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(next));
+  return next;
+}
+
+export function removeGuestOrder(id: number): GuestOrderRef[] {
+  const next = loadGuestOrders().filter((o) => o.id !== id);
+  localStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(next));
+  return next;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }

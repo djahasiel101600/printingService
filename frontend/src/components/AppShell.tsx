@@ -32,16 +32,14 @@ export default function AppShell() {
             >
               Track Order
             </NavLink>
-            {user && (
-              <NavLink
-                to="/orders"
-                className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 ${isActive ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`
-                }
-              >
-                My Orders
-              </NavLink>
-            )}
+            <NavLink
+              to="/orders"
+              className={({ isActive }) =>
+                `rounded-md px-3 py-1.5 ${isActive ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`
+              }
+            >
+              My Orders
+            </NavLink>
             {user?.is_shop_admin && (
               <NavLink
                 to="/admin/settings"

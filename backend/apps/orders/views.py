@@ -1,6 +1,7 @@
 import json
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
@@ -15,6 +16,8 @@ from apps.printing.services import submit_order_to_printer, sync_print_jobs
 from .models import Order, OrderFile, PrintSpecification
 from .serializers import AdminOrderSerializer, GuestContactSerializer, OrderSerializer, PrintSpecificationSerializer
 from .services.file_edits import FileEditError, apply_edit, count_pages
+
+User = get_user_model()
 
 EDITABLE_STATUSES = (
     Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT, Order.Status.REVISION_REQUESTED,
@@ -66,9 +69,29 @@ class OrderCreateView(APIView):
             return Response({"detail": "At least one file is required."}, status=400)
 
         user = request.user if request.user.is_authenticated else None
-        guest = GuestContactSerializer(data=request.data)
-        if user is None:
+        is_admin = bool(user and user.is_shop_admin)
+        customer_user_id = request.data.get("customer_user_id")
+
+        # An admin may place an order on a customer's behalf — either linked to
+        # a registered account (customer_user_id) or with guest contact details
+        # (walk-in customer). In both cases the order is NOT owned by the admin.
+        proxy_guest = is_admin and not customer_user_id and bool(request.data.get("guest_name"))
+
+        order_user = user
+        guest_data = {}
+        if is_admin and customer_user_id:
+            try:
+                target = User.objects.filter(pk=customer_user_id).first()
+            except (TypeError, ValueError):
+                target = None
+            if not target:
+                return Response({"detail": "Customer account not found."}, status=400)
+            order_user = target
+        elif user is None or proxy_guest:
+            guest = GuestContactSerializer(data=request.data)
             guest.is_valid(raise_exception=True)
+            guest_data = guest.validated_data
+            order_user = None
 
         try:
             spec_data = _parse_spec(request.data)
@@ -81,13 +104,9 @@ class OrderCreateView(APIView):
         spec_defaults = spec_serializer.validated_data
 
         order = Order.objects.create(
-            user=user,
+            user=order_user,
             status=Order.Status.DRAFT,
-            **({} if user else {
-                "guest_name": guest.validated_data["guest_name"],
-                "guest_contact_method": guest.validated_data["guest_contact_method"],
-                "guest_contact_value": guest.validated_data["guest_contact_value"],
-            }),
+            **guest_data,
         )
 
         errors = []
@@ -164,13 +183,24 @@ class OrderListView(APIView):
 
 
 class OrderDetailView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    """Owners and staff read the full order.
+
+    Guests (anonymous orders) prove ownership by presenting the tracking ID —
+    the same proof used by the file preview/edit endpoints — so a customer who
+    just placed an order without an account can still open their confirmation
+    page and pay.
+    """
+
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request, pk):
         order = get_object_or_404(Order, pk=pk)
-        if order.user != request.user and not request.user.is_shop_admin:
-            return Response({"detail": "Not allowed."}, status=403)
-        return Response(OrderSerializer(order).data)
+        user = request.user if request.user.is_authenticated else None
+        if user and (order.user_id == user.id or user.is_shop_admin):
+            return Response(OrderSerializer(order).data)
+        if order.user_id is None and request.query_params.get("tracking_id") == order.tracking_id:
+            return Response(OrderSerializer(order).data)
+        return Response({"detail": "Not allowed."}, status=403)
 
 
 class OrderFileEditView(APIView):
@@ -255,6 +285,7 @@ class TrackOrderView(APIView):
         if not order or not order.contact_matches(contact):
             return Response({"detail": "No order found for that tracking ID and contact."}, status=404)
         return Response({
+            "id": order.id,
             "tracking_id": order.tracking_id,
             "status": order.status,
             "status_display": order.get_status_display(),
@@ -292,7 +323,8 @@ class AdminOrderListView(APIView):
 
             orders = orders.filter(
                 Q(tracking_id__icontains=search) | Q(guest_name__icontains=search)
-                | Q(user__email__icontains=search) | Q(guest_contact_value__icontains=search)
+                | Q(user__email__icontains=search) | Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search) | Q(guest_contact_value__icontains=search)
             )
         return Response(AdminOrderSerializer(orders[:200], many=True).data)
 
@@ -321,6 +353,9 @@ class AdminOrderActionView(APIView):
         "complete": {Order.Status.PRINTED_READY},
         "cancel": {Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT, Order.Status.PENDING_REVIEW,
                    Order.Status.APPROVED_QUEUED, Order.Status.ON_HOLD, Order.Status.REVISION_REQUESTED},
+        "record_payment": {Order.Status.AWAITING_PAYMENT, Order.Status.PENDING_REVIEW,
+                           Order.Status.APPROVED_QUEUED, Order.Status.PRINTING, Order.Status.ON_HOLD,
+                           Order.Status.PRINTED_READY, Order.Status.COMPLETED},
     }
 
     def post(self, request, pk, action: str):
@@ -364,6 +399,13 @@ class AdminOrderActionView(APIView):
         elif action == "cancel":
             order.set_status(Order.Status.CANCELLED, note=note, actor=request.user)
             refund_order(order, reason="cancelled")
+        elif action == "record_payment":
+            from apps.payments.services import record_manual_payment
+
+            amount = record_manual_payment(order, actor=request.user)
+            if amount == 0:
+                return Response({"detail": "This order has no balance due."}, status=409)
+            order.refresh_from_db()
         return Response(AdminOrderSerializer(order).data)
 
 

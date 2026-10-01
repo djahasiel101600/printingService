@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -15,22 +16,38 @@ import type { Order } from "@/lib/types";
 
 const ADMIN_STATUSES = [
   { value: "", label: "All" },
+  { value: "awaiting_payment", label: "Awaiting payment" },
   { value: "pending_review", label: "Pending review" },
-  { value: "approved_queued", label: "Approved" },
+  { value: "revision_requested", label: "Revision" },
+  { value: "approved_queued", label: "Approved / Queued" },
   { value: "printing", label: "Printing" },
   { value: "on_hold", label: "On hold" },
-  { value: "printed_ready", label: "Ready" },
+  { value: "printed_ready", label: "Ready for pickup" },
+  { value: "completed", label: "Completed" },
+  { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 export default function AdminOrdersPage() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState("pending_review");
+  const [tab, setTab] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+
+  // Debounced search so typing doesn't fire a request per keystroke.
+  useEffect(() => {
+    const handle = setTimeout(() => setSearch(searchInput.trim()), 350);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
 
   const { data: orders, isLoading } = useQuery({
-    queryKey: ["admin-orders", tab],
+    queryKey: ["admin-orders", tab, search],
     queryFn: async () => {
-      const params = tab ? `?status=${tab}` : "";
-      const { data } = await api.get<Order[]>(`/admin/orders/${params}`);
+      const params = new URLSearchParams();
+      if (tab) params.set("status", tab);
+      if (search) params.set("search", search);
+      const qs = params.toString();
+      const { data } = await api.get<Order[]>(`/admin/orders/${qs ? `?${qs}` : ""}`);
       return data;
     },
   });
@@ -48,11 +65,28 @@ export default function AdminOrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Admin — Orders</h1>
-        <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
-          <RefreshCw className="mr-2 h-4 w-4" /> Sync printers
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="sm">
+            <Link to="/admin/orders/new">
+              <Plus className="mr-2 h-4 w-4" /> New order for customer
+            </Link>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
+            <RefreshCw className="mr-2 h-4 w-4" /> Sync printers
+          </Button>
+        </div>
+      </div>
+
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="Search tracking ID, name, email or phone…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          className="pl-9"
+        />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -91,7 +125,9 @@ export default function AdminOrdersPage() {
         </div>
       ) : (
         <Card>
-          <CardContent className="py-12 text-center text-muted-foreground">No orders in this queue.</CardContent>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            {search ? `No orders match "${search}".` : "No orders in this queue."}
+          </CardContent>
         </Card>
       )}
     </div>

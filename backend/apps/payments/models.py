@@ -32,3 +32,25 @@ class Payment(models.Model):
 
     def __str__(self) -> str:
         return f"Payment {self.payment_intent_id or '?'} {self.amount / 100:.2f} ({self.status})"
+
+
+class PaymentSettings(models.Model):
+    """Shop-wide payment options (singleton row, always pk=1).
+
+    GET is public so the checkout UI knows which options to offer; writes are
+    restricted to shop admins (see PaymentSettingsView).
+    """
+
+    allow_pay_on_pickup = models.BooleanField(
+        default=True,
+        help_text="Customers may choose to settle the balance when they pick up their printout.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"Payment settings (pay upon pickup: {self.allow_pay_on_pickup})"
+
+    @classmethod
+    def get_solo(cls) -> "PaymentSettings":
+        settings_obj, _ = cls.objects.get_or_create(pk=1)
+        return settings_obj

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Trash2, Upload } from "lucide-react";
+import { Check, Search, Trash2, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,18 +12,86 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth";
-import { api, apiErrorMessage } from "@/lib/api";
-import type { Capabilities, Order, PrintSpecification } from "@/lib/types";
+import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
+import type { Capabilities, CustomerOption, Order, PrintSpecification, Quote } from "@/lib/types";
 import SpecFields, { DEFAULT_SPEC } from "@/components/SpecFields";
 
-export default function NewOrderPage() {
+type GuestMethod = "email" | "phone" | "facebook";
+
+interface GuestDetailsProps {
+  name: string;
+  method: GuestMethod;
+  value: string;
+  onName: (v: string) => void;
+  onMethod: (v: GuestMethod) => void;
+  onValue: (v: string) => void;
+  title?: string;
+  description?: string;
+}
+
+/** Shared "who is this order for" card — guests filling their own details and
+ * admins entering a walk-in customer's details use the same UI. */
+function GuestDetailsCard({
+  name, method, value, onName, onMethod, onValue,
+  title = "Your details",
+  description = "So we can send you updates about your order.",
+}: GuestDetailsProps) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="guest-name">Name</Label>
+          <Input id="guest-name" value={name} onChange={(e) => onName(e.target.value)} required />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Contact method</Label>
+          <RadioGroup value={method} onValueChange={(v) => onMethod(v as GuestMethod)} className="flex gap-2">
+            <div className="flex items-center space-x-2 rounded-md border p-2.5">
+              <RadioGroupItem value="email" id="gm-email" />
+              <Label htmlFor="gm-email" className="cursor-pointer font-normal">Email</Label>
+            </div>
+            <div className="flex items-center space-x-2 rounded-md border p-2.5">
+              <RadioGroupItem value="phone" id="gm-phone" />
+              <Label htmlFor="gm-phone" className="cursor-pointer font-normal">Phone</Label>
+            </div>
+            <div className="flex items-center space-x-2 rounded-md border p-2.5">
+              <RadioGroupItem value="facebook" id="gm-fb" />
+              <Label htmlFor="gm-fb" className="cursor-pointer font-normal">Facebook</Label>
+            </div>
+          </RadioGroup>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="guest-value">
+            {method === "email" ? "Email address" : method === "phone" ? "Phone number" : "Facebook name"}
+          </Label>
+          <Input
+            id="guest-value"
+            type={method === "email" ? "email" : "text"}
+            value={value}
+            onChange={(e) => onValue(e.target.value)}
+            required
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function NewOrderPage({ adminMode = false }: { adminMode?: boolean }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
   const [spec, setSpec] = useState<PrintSpecification>(DEFAULT_SPEC);
   const [guestName, setGuestName] = useState("");
-  const [guestMethod, setGuestMethod] = useState<"email" | "phone" | "facebook">("email");
+  const [guestMethod, setGuestMethod] = useState<GuestMethod>("email");
   const [guestValue, setGuestValue] = useState("");
+  // Admin "order on behalf of a customer" helpers
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerOption | null>(null);
 
   const capabilitiesQuery = useQuery({
     queryKey: ["capabilities"],
@@ -33,22 +101,50 @@ export default function NewOrderPage() {
     },
   });
 
+  const customersQuery = useQuery({
+    queryKey: ["admin-customers", customerSearch],
+    queryFn: async () => {
+      const { data } = await api.get<CustomerOption[]>("/admin/customers/", {
+        params: { search: customerSearch.trim() },
+      });
+      return data;
+    },
+    enabled: adminMode && customerSearch.trim().length >= 1 && !selectedCustomer,
+  });
+
   const submitMutation = useMutation({
     mutationFn: async () => {
       const formData = new FormData();
       files.forEach((f) => formData.append("files", f));
       formData.append("spec", JSON.stringify(spec));
-      if (!user) {
+      if (adminMode) {
+        if (selectedCustomer) {
+          formData.append("customer_user_id", String(selectedCustomer.id));
+        } else {
+          formData.append("guest_name", guestName);
+          formData.append("guest_contact_method", guestMethod);
+          formData.append("guest_contact_value", guestValue);
+        }
+      } else if (!user) {
         formData.append("guest_name", guestName);
         formData.append("guest_contact_method", guestMethod);
         formData.append("guest_contact_value", guestValue);
       }
-      const { data } = await api.post<Order>("/orders/", formData);
-      return data;
+      // The API answers { order, quote } — never treat the envelope as the order.
+      const { data } = await api.post<{ order: Order; quote: Quote }>("/orders/", formData);
+      return data.order;
     },
     onSuccess: (order) => {
+      if (adminMode) {
+        toast.success(`Order ${order.tracking_id} created for ${order.client_name}.`);
+        navigate(`/admin/orders/${order.id}`);
+        return;
+      }
+      if (!user) {
+        saveGuestOrder({ id: order.id, tracking_id: order.tracking_id, created_at: order.created_at });
+      }
       toast.success(`Order ${order.tracking_id} created!`);
-      navigate(`/orders/${order.id}`);
+      navigate(`/orders/${order.id}`, { state: { justCreated: true, trackingId: order.tracking_id } });
     },
     onError: (err) => {
       toast.error(apiErrorMessage(err));
@@ -70,7 +166,12 @@ export default function NewOrderPage() {
       toast.error("Please upload at least one file.");
       return;
     }
-    if (!user && (!guestName || !guestValue)) {
+    if (adminMode) {
+      if (!selectedCustomer && (!guestName.trim() || !guestValue.trim())) {
+        toast.error("Select a registered customer, or enter the customer's name and contact details.");
+        return;
+      }
+    } else if (!user && (!guestName.trim() || !guestValue.trim())) {
       toast.error("Please provide your name and contact details.");
       return;
     }
@@ -78,13 +179,18 @@ export default function NewOrderPage() {
   }
 
   const capabilities = capabilitiesQuery.data ?? null;
+  const showGuestCard = adminMode ? !selectedCustomer : !user;
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">New Print Order</h1>
+        <h1 className="text-2xl font-bold">
+          {adminMode ? "New order for a customer" : "New Print Order"}
+        </h1>
         <p className="text-muted-foreground">
-          Upload your files and choose printing options. A real person reviews every job before it prints.
+          {adminMode
+            ? "Create an order on behalf of a customer. It will appear in Admin → Orders like any other order."
+            : "Upload your files and choose printing options. A real person reviews every job before it prints."}
         </p>
       </div>
 
@@ -141,50 +247,108 @@ export default function NewOrderPage() {
         </CardContent>
       </Card>
 
-      {!user && (
+      {adminMode && (
         <Card>
           <CardHeader>
-            <CardTitle>Your details</CardTitle>
-            <CardDescription>So we can send you updates about your order.</CardDescription>
+            <CardTitle>Customer</CardTitle>
+            <CardDescription>
+              Link this order to a registered customer's account (the guest details below are then
+              skipped), or leave it empty and enter walk-in details instead.
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="guest-name">Name</Label>
-              <Input id="guest-name" value={guestName} onChange={(e) => setGuestName(e.target.value)} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Contact method</Label>
-              <RadioGroup value={guestMethod} onValueChange={(v) => setGuestMethod(v as "email" | "phone" | "facebook")} className="flex gap-2">
-                <div className="flex items-center space-x-2 rounded-md border p-2.5">
-                  <RadioGroupItem value="email" id="gm-email" />
-                  <Label htmlFor="gm-email" className="cursor-pointer font-normal">Email</Label>
+          <CardContent className="space-y-3">
+            {selectedCustomer ? (
+              <div className="flex items-center justify-between rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span className="font-medium">
+                    {selectedCustomer.first_name || selectedCustomer.last_name
+                      ? `${selectedCustomer.first_name} ${selectedCustomer.last_name}`.trim()
+                      : selectedCustomer.email}
+                  </span>
+                  <span className="text-muted-foreground">{selectedCustomer.email}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCustomer(null)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Clear selected customer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search customers by name, email or phone…"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    className="pl-9"
+                  />
                 </div>
-                <div className="flex items-center space-x-2 rounded-md border p-2.5">
-                  <RadioGroupItem value="phone" id="gm-phone" />
-                  <Label htmlFor="gm-phone" className="cursor-pointer font-normal">Phone</Label>
-                </div>
-                <div className="flex items-center space-x-2 rounded-md border p-2.5">
-                  <RadioGroupItem value="facebook" id="gm-fb" />
-                  <Label htmlFor="gm-fb" className="cursor-pointer font-normal">Facebook</Label>
-                </div>
-              </RadioGroup>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="guest-value">
-                {guestMethod === "email" ? "Email address" : guestMethod === "phone" ? "Phone number" : "Facebook name"}
-              </Label>
-              <Input id="guest-value" type={guestMethod === "email" ? "email" : "text"} value={guestValue} onChange={(e) => setGuestValue(e.target.value)} required />
-            </div>
+                {customersQuery.isLoading && <Skeleton className="h-10 w-full" />}
+                {customersQuery.data && customersQuery.data.length > 0 && (
+                  <ul className="max-h-52 overflow-auto rounded-md border">
+                    {customersQuery.data.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomer(c);
+                            setCustomerSearch("");
+                          }}
+                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent"
+                        >
+                          <span className="truncate">
+                            <span className="font-medium">
+                              {c.first_name || c.last_name ? `${c.first_name} ${c.last_name}`.trim() : c.email}
+                            </span>
+                            <span className="ml-2 text-muted-foreground">{c.email}</span>
+                          </span>
+                          {c.phone && <span className="ml-2 shrink-0 text-muted-foreground">{c.phone}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {customersQuery.data && customersQuery.data.length === 0 && customerSearch.trim() && (
+                  <p className="text-sm text-muted-foreground">
+                    No registered customers match "{customerSearch.trim()}".
+                  </p>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
+      )}
+
+      {showGuestCard && (
+        <GuestDetailsCard
+          name={guestName}
+          method={guestMethod}
+          value={guestValue}
+          onName={setGuestName}
+          onMethod={setGuestMethod}
+          onValue={setGuestValue}
+          title={adminMode ? "Walk-in customer details" : "Your details"}
+          description={
+            adminMode
+              ? "Enter the customer's details so they can track this order. Required unless you selected an account above."
+              : "So we can send you updates about your order."
+          }
+        />
       )}
 
       <Separator />
 
       <div className="flex justify-end gap-3">
-        <Button type="button" variant="outline" onClick={() => navigate("/")}>Cancel</Button>
+        <Button type="button" variant="outline" onClick={() => navigate(adminMode ? "/admin" : "/")}>
+          Cancel
+        </Button>
         <Button type="submit" disabled={submitMutation.isPending}>
-          {submitMutation.isPending ? "Submitting…" : "Place Order"}
+          {submitMutation.isPending ? "Submitting…" : adminMode ? "Create Order" : "Place Order"}
         </Button>
       </div>
     </form>

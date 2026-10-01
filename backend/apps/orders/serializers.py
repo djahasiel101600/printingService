@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.printing.constants import (
@@ -80,18 +81,30 @@ class OrderSerializer(serializers.ModelSerializer):
     payments = OrderPaymentSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     client_name = serializers.CharField(source="client_display_name", read_only=True)
-    subtotal_peso = serializers.FloatField(read_only=True)
+    # NOTE: must be a SerializerMethodField — a plain read-only FloatField would
+    # look up `Order.subtotal_peso`, which does not exist, and DRF would then
+    # silently omit the key from the response (breaking the frontend).
+    subtotal_peso = serializers.SerializerMethodField()
+    min_partial_peso = serializers.SerializerMethodField()
     amount_paid_peso = serializers.SerializerMethodField()
     balance_due_peso = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = ["id", "tracking_id", "status", "status_display", "payment_type",
-                  "client_name", "guest_name", "guest_contact_method", "guest_contact_value",
-                  "subtotal", "subtotal_peso", "amount_paid", "amount_paid_peso",
+                  "payment_method", "client_name", "guest_name", "guest_contact_method",
+                  "guest_contact_value", "subtotal", "subtotal_peso", "min_partial_peso",
+                  "amount_paid", "amount_paid_peso",
                   "balance_due", "balance_due_peso", "admin_notes", "revision_note",
                   "files", "history", "payments", "created_at", "approved_at", "completed_at"]
         read_only_fields = fields
+
+    def get_subtotal_peso(self, obj) -> float:
+        return obj.subtotal / 100
+
+    def get_min_partial_peso(self, obj) -> float:
+        """Smallest allowed down payment (matches payments.services.create_checkout)."""
+        return (obj.subtotal * settings.MIN_PARTIAL_PERCENT // 100) / 100
 
     def get_amount_paid_peso(self, obj) -> float:
         return obj.amount_paid / 100

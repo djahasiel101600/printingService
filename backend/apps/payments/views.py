@@ -9,16 +9,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.orders.models import Order
+from apps.orders.serializers import OrderSerializer
 
 from apps.pricing.views import IsShopAdmin
 
-from .models import Payment
+from .models import Payment, PaymentSettings
 from . import services
 
 
 class CheckoutSerializer(serializers.Serializer):
     order_id = serializers.IntegerField()
-    payment_type = serializers.ChoiceField(choices=[Order.PaymentType.FULL, Order.PaymentType.PARTIAL])
+    method = serializers.ChoiceField(choices=["qrph", "pickup"], default="qrph")
+    payment_type = serializers.ChoiceField(
+        choices=[Order.PaymentType.FULL, Order.PaymentType.PARTIAL], required=False,
+    )
 
     def validate_order_id(self, value):
         order = Order.objects.filter(id=value).first()
@@ -31,9 +35,21 @@ class CheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError(f"Order is not payable (status: {order.status}).")
         return value
 
+    def validate(self, attrs):
+        if attrs.get("method", "qrph") == "qrph" and not attrs.get("payment_type"):
+            raise serializers.ValidationError(
+                {"payment_type": "Choose full or partial payment when paying by QR Ph."}
+            )
+        if attrs.get("method") == "pickup" and not PaymentSettings.get_solo().allow_pay_on_pickup:
+            raise serializers.ValidationError(
+                {"method": "Pay upon pickup is currently disabled by the shop."}
+            )
+        return attrs
+
 
 class CheckoutView(APIView):
-    """Create a QR Ph checkout (PaymentIntent -> attach -> QR image URL)."""
+    """Create a QR Ph checkout (PaymentIntent -> attach -> QR image URL),
+    or record the customer's choice to pay upon pickup."""
 
     permission_classes = [permissions.AllowAny]
 
@@ -41,8 +57,19 @@ class CheckoutView(APIView):
         serializer = CheckoutSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         order = Order.objects.get(id=serializer.validated_data["order_id"])
+        method = serializer.validated_data.get("method", "qrph")
+
+        if method == "pickup":
+            services.choose_pay_on_pickup(order)
+            return Response({
+                "method": "pickup",
+                "detail": "Pay upon pickup selected. Pay the balance when you collect your order.",
+                "order": OrderSerializer(order).data,
+            }, status=201)
+
         payment = services.create_checkout(order, serializer.validated_data["payment_type"])
         return Response({
+            "method": "qrph",
             "payment_id": payment.id,
             "amount": payment.amount,
             "amount_peso": payment.amount / 100,
@@ -50,7 +77,35 @@ class CheckoutView(APIView):
             "qr_image_url": payment.qr_image_url,
             "expires_at": payment.checkout_expires_at,
             "status": payment.status,
+            "mock_mode": settings.PAYMONGO_MOCK_MODE,
         }, status=201)
+
+
+class PaymentSettingsView(APIView):
+    """Public read / admin write for the shop's payment options."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        settings_obj = PaymentSettings.get_solo()
+        return Response({
+            "allow_pay_on_pickup": settings_obj.allow_pay_on_pickup,
+            "updated_at": settings_obj.updated_at,
+        })
+
+    def put(self, request):
+        if not (request.user and request.user.is_authenticated and request.user.is_shop_admin):
+            return Response({"detail": "Admin access required."}, status=403)
+        value = request.data.get("allow_pay_on_pickup")
+        if not isinstance(value, bool):
+            return Response({"detail": "allow_pay_on_pickup must be a boolean."}, status=400)
+        settings_obj = PaymentSettings.get_solo()
+        settings_obj.allow_pay_on_pickup = value
+        settings_obj.save(update_fields=["allow_pay_on_pickup", "updated_at"])
+        return Response({
+            "allow_pay_on_pickup": settings_obj.allow_pay_on_pickup,
+            "updated_at": settings_obj.updated_at,
+        })
 
 
 class WebhookView(APIView):

@@ -1,18 +1,22 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { ExternalLink } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/StatusBadge";
-import { api, apiErrorMessage } from "@/lib/api";
+import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
 import type { TrackResult } from "@/lib/types";
 
 export default function TrackOrderPage() {
   const [trackingId, setTrackingId] = useState("");
   const [result, setResult] = useState<TrackResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   async function onTrack(e: React.FormEvent) {
     e.preventDefault();
@@ -26,6 +30,14 @@ export default function TrackOrderPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function openOrderDetails() {
+    if (!result) return;
+    // Remember the order on this device so the details page (and My Orders)
+    // can be reopened without an account — the tracking ID is the proof.
+    saveGuestOrder({ id: result.id, tracking_id: result.tracking_id, created_at: result.created_at });
+    navigate(`/orders/${result.id}`);
   }
 
   return (
@@ -99,6 +111,15 @@ export default function TrackOrderPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+            <Separator />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={openOrderDetails}>
+                <ExternalLink className="mr-2 h-4 w-4" /> Open order details
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Review files, pay, or manage the order from its details page.
+              </span>
             </div>
           </CardContent>
         </Card>

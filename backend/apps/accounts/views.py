@@ -1,9 +1,12 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
+
+from apps.pricing.views import IsShopAdmin
 
 from .serializers import (
     EmailTokenObtainPairSerializer,
@@ -79,3 +82,29 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class AdminCustomersView(APIView):
+    """Admin typeahead: registered customers an order can be linked to when
+    creating an order on the customer's behalf."""
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def get(self, request):
+        search = request.query_params.get("search", "").strip()
+        customers = User.objects.filter(role=User.Role.CLIENT)
+        if search:
+            customers = customers.filter(
+                Q(email__icontains=search) | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search) | Q(phone__icontains=search)
+            )
+        return Response([
+            {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "phone": user.phone,
+            }
+            for user in customers[:20]
+        ])
