@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { api } from "@/lib/api";
+import { API_URL, api } from "@/lib/api";
 import { formatBytes, formatPageRange } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import type { DocumentPreview, FileVariant, OrderFile, PreviewBlock } from "@/lib/types";
@@ -38,7 +38,14 @@ function defaultVariant(file: OrderFile): FileVariant {
   return "original";
 }
 
-export function buildFileUrl(
+/**
+ * Path *relative to the axios `baseURL`*, which is how every other call in the
+ * app is written (`/orders/...`, `/admin/orders/...`). The leading slash matters:
+ * axios joins it onto `baseURL` exactly once, so `/api` + `/orders/1/...`
+ * becomes `/api/orders/1/...`. Prepending `baseURL` here as well would produce
+ * a doubled prefix (`/api/api/orders/...`) and a 404 from the proxy.
+ */
+export function buildFilePath(
   orderId: number,
   fileId: number,
   opts: { variant?: FileVariant; download?: boolean; trackingId?: string } = {},
@@ -48,7 +55,21 @@ export function buildFileUrl(
   if (opts.download) params.set("download", "1");
   if (opts.trackingId) params.set("tracking_id", opts.trackingId);
   const query = params.toString();
-  return `${api.defaults.baseURL}/orders/${orderId}/files/${fileId}/preview/${query ? `?${query}` : ""}`;
+  return `/orders/${orderId}/files/${fileId}/preview/${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Fully-qualified URL for places where axios is *not* involved (a plain
+ * `<a href>`, `window.open`, copying a link). When the API is same-origin the
+ * result is an absolute path (`/api/orders/...`) that the browser resolves
+ * against the current host, so it stays correct behind the tunnel and in dev.
+ */
+export function buildFileUrl(
+  orderId: number,
+  fileId: number,
+  opts: { variant?: FileVariant; download?: boolean; trackingId?: string } = {},
+): string {
+  return `${API_URL.replace(/\/+$/, "")}${buildFilePath(orderId, fileId, opts)}`;
 }
 
 /**
@@ -114,15 +135,15 @@ export default function FilePreviewDialog({
   const isPdf = file?.file_type === "pdf";
   const totalPages = file?.page_count ?? 1;
 
-  const variantUrl = useMemo(
-    () => (fileId ? buildFileUrl(orderId, fileId, { variant, trackingId }) : ""),
+  const variantPath = useMemo(
+    () => (fileId ? buildFilePath(orderId, fileId, { variant, trackingId }) : ""),
     [orderId, fileId, variant, trackingId],
   );
 
   const blobQuery = useQuery({
     queryKey: ["file-blob", orderId, fileId, variant],
     enabled: open && Boolean(fileId) && !isDocument,
-    queryFn: () => fetchBlobUrl(variantUrl),
+    queryFn: () => fetchBlobUrl(variantPath),
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
@@ -148,7 +169,7 @@ export default function FilePreviewDialog({
     if (!fileId || !file) return;
     setDownloading(true);
     void downloadFile(
-      buildFileUrl(orderId, fileId, { variant, trackingId }),
+      buildFilePath(orderId, fileId, { variant, trackingId }),
       file.file_name,
       (message) => toast.error(message),
     ).finally(() => setDownloading(false));
