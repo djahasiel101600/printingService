@@ -43,16 +43,31 @@ class PrintSpecificationSerializer(serializers.ModelSerializer):
 class OrderFileSerializer(serializers.ModelSerializer):
     specification = PrintSpecificationSerializer(read_only=True)
     has_edits = serializers.SerializerMethodField()
+    has_final_file = serializers.SerializerMethodField()
+    # Page selection: what the shop decided to actually put in the printer.
+    # These are model *properties*, so they are declared explicitly — DRF will
+    # not infer a field type for them on its own.
+    selected_pages = serializers.ListField(child=serializers.IntegerField(), read_only=True)
+    selected_page_count = serializers.IntegerField(read_only=True)
+    page_selection_label = serializers.CharField(read_only=True)
+    page_selection_active = serializers.BooleanField(read_only=True)
+    print_ready = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = OrderFile
         fields = ["id", "file_name", "file_type", "content_type", "size", "page_count",
-                  "edit_actions", "has_edits", "file", "edited_file", "specification",
+                  "edit_actions", "has_edits", "file", "edited_file", "final_file",
+                  "has_final_file", "replaced_by_admin", "specification",
+                  "page_selection", "selected_pages", "selected_page_count",
+                  "page_selection_label", "page_selection_active", "print_ready",
                   "uploaded_at"]
         read_only_fields = fields
 
     def get_has_edits(self, obj) -> bool:
         return bool(obj.edited_file)
+
+    def get_has_final_file(self, obj) -> bool:
+        return bool(obj.final_file)
 
 
 class StatusHistorySerializer(serializers.ModelSerializer):
@@ -96,6 +111,7 @@ class OrderSerializer(serializers.ModelSerializer):
                   "guest_contact_value", "subtotal", "subtotal_peso", "min_partial_peso",
                   "amount_paid", "amount_paid_peso",
                   "balance_due", "balance_due_peso", "admin_notes", "revision_note",
+                  "reprint_count",
                   "files", "history", "payments", "created_at", "approved_at", "completed_at"]
         read_only_fields = fields
 
@@ -125,11 +141,18 @@ class AdminOrderSerializer(OrderSerializer):
 
 class PrintJobSerializerLite(serializers.ModelSerializer):
     file_name = serializers.CharField(source="order_file.file_name", read_only=True, default=None)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    is_printer_cancelled = serializers.BooleanField(read_only=True)
+    pages_label = serializers.CharField(read_only=True)
+    pages_snapshot = serializers.ListField(child=serializers.IntegerField(), read_only=True)
 
     class Meta:
         model = PrintJob
-        fields = ["id", "epson_job_id", "file_name", "print_mode", "status", "epson_status",
-                  "pages_printed", "error_message", "submitted_at", "completed_at"]
+        fields = ["id", "epson_job_id", "file_name", "order_file", "printer_name",
+                  "print_mode", "status", "status_display", "epson_status",
+                  "pages_printed", "pages_snapshot", "pages_label", "is_reprint",
+                  "is_printer_cancelled", "error_message",
+                  "submitted_at", "completed_at", "created_at"]
 
 
 class GuestContactSerializer(serializers.Serializer):

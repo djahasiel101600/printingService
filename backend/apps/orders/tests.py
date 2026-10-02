@@ -156,10 +156,24 @@ class OrderLifecycleTests(TestCase):
         self.assertEqual(track.status_code, 200)
         self.assertEqual(track.json()["status"], "pending_review")
 
-        # Wrong contact is rejected
+        # A wrong contact is refused. 403 (not 404) because the tracking ID is
+        # real — only the contact check failed — and the message tells the
+        # guest exactly what to do instead of a dead end.
         track_bad = self.client_api.get(
             f"/api/track/{order_obj.tracking_id}/", {"contact": "whoever@else.com"})
-        self.assertEqual(track_bad.status_code, 404)
+        self.assertEqual(track_bad.status_code, 403)
+        self.assertIn("does not match", track_bad.json()["detail"])
+
+        # An unknown tracking ID is a genuine 404.
+        track_missing = self.client_api.get(
+            "/api/track/PSP-ZZZZ-ZZZZ/", {"contact": "juan@example.com"})
+        self.assertEqual(track_missing.status_code, 404)
+
+        # Lookup tolerates the casing people actually type.
+        track_loose = self.client_api.get(
+            f"/api/track/{order_obj.tracking_id.lower()}/",
+            {"contact": "JUAN@EXAMPLE.COM"})
+        self.assertEqual(track_loose.status_code, 200)
 
     def _admin_client(self):
         from django.contrib.auth import get_user_model

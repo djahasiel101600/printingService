@@ -7,9 +7,13 @@ export type OrderStatus =
   | "printing"
   | "on_hold"
   | "printed_ready"
+  /** The printer (or its queue) dropped the job — nothing was printed. */
+  | "print_cancelled"
   | "rejected"
   | "cancelled"
   | "completed";
+
+export type FileVariant = "original" | "edited" | "final";
 
 export interface PrintSpecification {
   id?: number;
@@ -30,7 +34,7 @@ export interface PrintSpecification {
 export interface OrderFile {
   id: number;
   file_name: string;
-  file_type: "pdf" | "image";
+  file_type: "pdf" | "image" | "document";
   content_type: string;
   size: number;
   page_count: number;
@@ -38,6 +42,19 @@ export interface OrderFile {
   has_edits: boolean;
   file: string;
   edited_file: string | null;
+  /** Admin-prepared file (page selection / converted document). */
+  final_file: string | null;
+  has_final_file: boolean;
+  /** True when the shop swapped this upload for a print-ready version. */
+  replaced_by_admin: boolean;
+  /** Pages the admin chose to print; empty means "the whole document". */
+  page_selection: number[];
+  selected_pages: number[];
+  selected_page_count: number;
+  page_selection_label: string;
+  page_selection_active: boolean;
+  /** False for documents the shop must convert to PDF before printing. */
+  print_ready: boolean;
   specification?: PrintSpecification;
   uploaded_at: string;
 }
@@ -65,13 +82,23 @@ export interface PrintJob {
   id: number;
   epson_job_id: string;
   file_name: string | null;
+  order_file: number | null;
+  printer_name: string;
   print_mode: string;
   status: string;
+  status_display: string;
   epson_status: string;
   pages_printed: number;
+  /** Pages sent for this run (empty = every page). */
+  pages_snapshot: number[];
+  pages_label: string;
+  is_reprint: boolean;
+  /** True when the printer dropped the job rather than the shop or client. */
+  is_printer_cancelled: boolean;
   error_message: string;
   submitted_at: string | null;
   completed_at: string | null;
+  created_at: string;
 }
 
 export interface Order {
@@ -94,6 +121,7 @@ export interface Order {
   balance_due_peso: number;
   admin_notes: string;
   revision_note: string;
+  reprint_count: number;
   files: OrderFile[];
   history: OrderHistory[];
   payments: OrderPayment[];

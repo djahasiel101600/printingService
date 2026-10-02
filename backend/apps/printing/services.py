@@ -129,6 +129,13 @@ ACTIVE_JOB_STATUSES = (
     PrintJob.JobStatus.EXECUTED, PrintJob.JobStatus.PRINTING,
 )
 
+# Jobs in these states will never change again, so there is nothing to poll.
+# CANCELED matters most: without it a job the printer dropped would be picked
+# up by the next sync and resurrected as "printing".
+TERMINAL_JOB_STATUSES = (
+    PrintJob.JobStatus.COMPLETED, PrintJob.JobStatus.FAILED, PrintJob.JobStatus.CANCELED,
+)
+
 
 def _has_active_jobs(order: Order) -> bool:
     """True while any sheet of the order is still queued or printing."""
@@ -137,7 +144,7 @@ def _has_active_jobs(order: Order) -> bool:
 
 def sync_print_jobs(order: Order | None = None) -> None:
     """Poll Epson for job status and fold it into PrintJob / Order statuses."""
-    queryset = PrintJob.objects.exclude(status__in=[PrintJob.JobStatus.COMPLETED, PrintJob.JobStatus.FAILED])
+    queryset = PrintJob.objects.exclude(status__in=TERMINAL_JOB_STATUSES)
     if order is not None:
         queryset = queryset.filter(order=order)
     client = EpsonClient()

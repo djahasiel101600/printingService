@@ -187,6 +187,7 @@ PREVIEWABLE_EXTENSIONS = (
     "docx", "xlsx", "pptx", "txt", "md", "csv",
 )
 PRINTABLE_EXTENSIONS = ("pdf", "jpg", "jpeg", "png")
+IMAGE_EXTENSIONS = ("jpg", "jpeg", "png", "webp")
 # Legacy binary Office formats cannot be parsed with the standard library and
 # are rejected at upload time with a pointer to the modern equivalents.
 LEGACY_EXTENSIONS = ("doc", "xls", "ppt")

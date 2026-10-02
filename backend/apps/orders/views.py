@@ -16,7 +16,8 @@ from apps.printing.services import (
 )
 
 from .models import (
-    PRINTABLE_EXTENSIONS, Order, OrderFile, OrderStatusHistory, PrintSpecification,
+    IMAGE_EXTENSIONS, LEGACY_EXTENSIONS, PREVIEWABLE_EXTENSIONS, PRINTABLE_EXTENSIONS,
+    Order, OrderFile, OrderStatusHistory, PrintSpecification, file_extension,
     format_page_selection,
 )
 from .serializers import AdminOrderSerializer, GuestContactSerializer, OrderSerializer, PrintSpecificationSerializer
@@ -118,11 +119,30 @@ class OrderCreateView(APIView):
         errors = []
         for index, uploaded in enumerate(files):
             content_type = uploaded.content_type or ""
-            is_pdf = content_type == "application/pdf" or uploaded.name.lower().endswith(".pdf")
-            file_type = OrderFile.FileType.PDF if is_pdf else OrderFile.FileType.IMAGE
+            extension = file_extension(uploaded.name)
+            if extension in LEGACY_EXTENSIONS:
+                errors.append(
+                    f"{uploaded.name}: the legacy '.{extension}' format cannot be previewed or "
+                    f"printed. Please upload the modern '.{extension}x' version, or a PDF."
+                )
+                continue
+            if extension not in PREVIEWABLE_EXTENSIONS:
+                errors.append(
+                    f"{uploaded.name}: unsupported file type '.{extension or 'unknown'}'. "
+                    "Upload a PDF, an image, or a Word/Excel/PowerPoint/text document."
+                )
+                continue
             if uploaded.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
                 errors.append(f"{uploaded.name} exceeds the {settings.MAX_UPLOAD_MB}MB limit.")
                 continue
+            if extension == "pdf":
+                file_type = OrderFile.FileType.PDF
+            elif extension in IMAGE_EXTENSIONS:
+                file_type = OrderFile.FileType.IMAGE
+            else:
+                # Word / Excel / PowerPoint / text: reviewable on screen, but the
+                # shop converts them to PDF before they can be printed.
+                file_type = OrderFile.FileType.DOCUMENT
             order_file = OrderFile(
                 order=order, file=uploaded, file_name=uploaded.name,
                 file_type=file_type, content_type=content_type, size=uploaded.size,
@@ -260,6 +280,21 @@ def _file_read(field) -> bytes:
         field.close()
 
 
+def _may_read_file(request, order: Order) -> bool:
+    """Who can open a file belonging to ``order``.
+
+    Staff can review anything (that is their job). Otherwise the caller must be
+    the account that owns the order, or — for guest orders — present the
+    tracking ID, which is the ownership proof used across the guest flow.
+    """
+    user = request.user if request.user.is_authenticated else None
+    if user and user.is_shop_admin:
+        return True
+    if order.user:
+        return user is not None and order.user_id == user.id
+    return request.query_params.get("tracking_id") == order.tracking_id
+
+
 class OrderFilePreviewView(APIView):
     """Stream an uploaded file back for preview or download.
 
@@ -276,11 +311,7 @@ class OrderFilePreviewView(APIView):
     def get(self, request, order_pk, file_pk):
         order = get_object_or_404(Order, pk=order_pk)
         order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
-        user = request.user if request.user.is_authenticated else None
-        if order.user:
-            if user != order.user and not (user and user.is_shop_admin):
-                return Response({"detail": "Not allowed."}, status=403)
-        elif request.query_params.get("tracking_id") != order.tracking_id:
+        if not _may_read_file(request, order):
             return Response({"detail": "Not allowed."}, status=403)
 
         variant = request.query_params.get("variant", "edited")
@@ -323,11 +354,7 @@ class OrderFileTextPreviewView(APIView):
     def get(self, request, order_pk, file_pk):
         order = get_object_or_404(Order, pk=order_pk)
         order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
-        user = request.user if request.user.is_authenticated else None
-        if order.user:
-            if user != order.user and not (user and user.is_shop_admin):
-                return Response({"detail": "Not allowed."}, status=403)
-        elif request.query_params.get("tracking_id") != order.tracking_id:
+        if not _may_read_file(request, order):
             return Response({"detail": "Not allowed."}, status=403)
 
         try:
