@@ -205,6 +205,23 @@ export interface PriceRule {
   is_active: boolean;
 }
 
+export type PreviewBlock =
+  | { type: "heading"; level: number; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "spacer"; text: string }
+  | { type: "table"; label?: string; rows: string[][] }
+  | { type: "slide"; label: string; title: string; items: string[] };
+
+export interface DocumentPreview {
+  kind: "document" | "spreadsheet" | "slides" | "text";
+  format: string;
+  blocks: PreviewBlock[];
+  truncated: boolean;
+  block_count: number;
+  file_name: string;
+  page_count: number;
+}
+
 export interface TrackResult {
   id: number;
   tracking_id: string;
@@ -214,6 +231,7 @@ export interface TrackResult {
   subtotal_peso: number;
   amount_paid_peso: number;
   balance_due_peso: number;
+  reprint_count: number;
   files: { id: number; file_name: string; page_count: number; file_type: string }[];
   history: { to_status: OrderStatus; to_status_display: string; note: string; created_at: string }[];
   created_at: string;

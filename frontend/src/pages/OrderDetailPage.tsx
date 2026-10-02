@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Copy, LogIn, QrCode, Wallet } from "lucide-react";
+import { CheckCircle2, Copy, Eye, LogIn, QrCode, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +10,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
+import FilePreviewDialog from "@/components/FilePreviewDialog";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, loadGuestOrders } from "@/lib/api";
-import type { CheckoutResponse, Order, ShopPaymentSettings } from "@/lib/types";
+import type { CheckoutResponse, Order, OrderFile, ShopPaymentSettings } from "@/lib/types";
 
 interface CreatedState {
   justCreated?: boolean;
@@ -28,6 +29,7 @@ export default function OrderDetailPage() {
 
   const [showCheckout, setShowCheckout] = useState(false);
   const [qrResult, setQrResult] = useState<CheckoutResponse | null>(null);
+  const [previewFile, setPreviewFile] = useState<OrderFile | null>(null);
 
   // Orders placed without an account are proven by their tracking ID, which
   // is stored on this device right after checkout (see NewOrderPage).
@@ -227,16 +229,28 @@ export default function OrderDetailPage() {
       )}
 
       <Card>
-        <CardHeader><CardTitle>Files</CardTitle></CardHeader>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle>Files</CardTitle>
+          <span className="text-xs text-muted-foreground">
+            Tap preview to check what you uploaded
+          </span>
+        </CardHeader>
         <CardContent>
           <ul className="space-y-2">
             {order.files.map((f) => (
-              <li key={f.id} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
-                <div>
-                  <p className="font-medium">{f.file_name}</p>
-                  <p className="text-xs text-muted-foreground">{f.page_count} page(s) · {f.file_type}</p>
+              <li key={f.id}
+                className="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{f.file_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {f.page_count} page{f.page_count === 1 ? "" : "s"} · {f.file_type}
+                    {f.has_edits && " · edited"}
+                  </p>
                 </div>
-                {f.has_edits && <span className="text-xs text-blue-600">edited</span>}
+                <Button variant="outline" size="sm"
+                  onClick={() => setPreviewFile(f)}>
+                  <Eye className="mr-2 h-4 w-4" /> Preview
+                </Button>
               </li>
             ))}
           </ul>
@@ -375,6 +389,13 @@ export default function OrderDetailPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <FilePreviewDialog
+        file={previewFile}
+        orderId={Number(id)}
+        trackingId={guestRef?.tracking_id}
+        onClose={() => setPreviewFile(null)}
+      />
     </div>
   );
 }

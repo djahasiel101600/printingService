@@ -14,18 +14,27 @@ import type { TrackResult } from "@/lib/types";
 
 export default function TrackOrderPage() {
   const [trackingId, setTrackingId] = useState("");
+  const [contact, setContact] = useState("");
   const [result, setResult] = useState<TrackResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
   async function onTrack(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setResult(null);
+    setError("");
     try {
-      const { data } = await api.get<TrackResult>(`/track/${trackingId.trim()}/`);
+      // The API requires the contact used when the order was placed as proof
+      // that this lookup belongs to the customer — a tracking ID alone is not
+      // enough to read somebody else's order.
+      const { data } = await api.get<TrackResult>(`/track/${trackingId.trim()}/`, {
+        params: contact.trim() ? { contact: contact.trim() } : undefined,
+      });
       setResult(data);
     } catch (err) {
+      setError(apiErrorMessage(err));
       toast.error(apiErrorMessage(err));
     } finally {
       setLoading(false);
