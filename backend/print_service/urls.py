@@ -4,6 +4,8 @@ from django.http import JsonResponse
 from django.urls import include, path, re_path
 from django.views.static import serve as static_serve
 
+from apps.payments.views import WebhookView
+
 
 def health(_request):
     """Lightweight liveness probe used by the container healthcheck / tunnel."""
@@ -18,6 +20,10 @@ urlpatterns = [
     path("api/", include("apps.orders.urls")),
     path("api/", include("apps.payments.urls")),
     path("api/", include("apps.printing.urls")),
+    # PayMongo webhook alias. The canonical endpoint is /api/payments/webhook/;
+    # this also accepts the short /webhook path some dashboards are configured
+    # with (nginx forwards it here — see frontend/nginx.conf).
+    re_path(r"^webhook/?$", WebhookView.as_view(), name="payments-webhook-alias"),
 ]
 
 # Serve collected static (Django admin assets) and uploaded media in every

@@ -39,6 +39,7 @@ def create_checkout(order: Order, payment_type: str) -> Payment:
         name=order.client_display_name,
         email=order.contact_email,
         phone=order.guest_contact_value if order.guest_contact_method == Order.ContactMethod.PHONE else "",
+        expiry_seconds=1800,  # 30 minutes, matching PayMongo's default QR lifetime
     )
     attached = client.attach_payment_method(
         intent_id=intent["id"],

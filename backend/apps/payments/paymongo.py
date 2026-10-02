@@ -79,19 +79,29 @@ class PayMongoClient:
                 "amount": data["attributes"]["amount"], "status": data["attributes"].get("status"),
                 "next_action": data["attributes"].get("next_action")}
 
-    def create_payment_method(self, amount: int, name: str, email: str, phone: str) -> dict:
+    def create_payment_method(
+        self, amount: int, name: str, email: str, phone: str, expiry_seconds: int | None = None,
+    ) -> dict:
+        """Create a QR Ph Payment Method.
+
+        A QR Ph Payment Method carries no amount (the Payment Intent does):
+        PayMongo only accepts ``type`` (plus the optional ``expiry_seconds`` /
+        ``billing``), and rejects any other attribute with a 400. Sending
+        ``amount`` / ``currency`` here previously made every live checkout fail.
+        """
         if self.mock_mode:
             return {"id": f"pm_mock_{uuid.uuid4().hex[:24]}"}
-        body = {
-            "data": {
-                "attributes": {
-                    "type": "qrph",
-                    "amount": amount,
-                    "currency": "PHP",
-                    "billing": {"name": name or "Print Customer", "email": email or "", "phone": phone or ""},
-                }
-            }
-        }
+        attributes: dict = {"type": "qrph"}
+        if expiry_seconds:
+            # Seconds until the generated QR expires after attaching (60-9000).
+            attributes["expiry_seconds"] = expiry_seconds
+        # Only include billing fields we actually have — an empty-string email
+        # or phone is itself a validation error on PayMongo's side.
+        billing = {"name": (name or "").strip(), "email": (email or "").strip(), "phone": (phone or "").strip()}
+        billing = {key: value for key, value in billing.items() if value}
+        if billing:
+            attributes["billing"] = billing
+        body = {"data": {"attributes": attributes}}
         return {"id": self._request("POST", "/payment_methods", body)["data"]["id"]}
 
     def attach_payment_method(self, intent_id: str, payment_method_id: str, client_key: str, return_url: str) -> dict:

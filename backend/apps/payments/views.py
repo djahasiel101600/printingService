@@ -1,6 +1,8 @@
 import hmac
 import hashlib
+import logging
 
+import requests
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
@@ -14,7 +16,10 @@ from apps.orders.serializers import OrderSerializer
 from apps.pricing.views import IsShopAdmin
 
 from .models import Payment, PaymentSettings
+from .paymongo import PayMongoError
 from . import services
+
+log = logging.getLogger(__name__)
 
 
 class CheckoutSerializer(serializers.Serializer):
@@ -60,14 +65,31 @@ class CheckoutView(APIView):
         method = serializer.validated_data.get("method", "qrph")
 
         if method == "pickup":
-            services.choose_pay_on_pickup(order)
+            try:
+                services.choose_pay_on_pickup(order)
+            except PayMongoError as exc:
+                return Response({"detail": str(exc)}, status=400)
             return Response({
                 "method": "pickup",
                 "detail": "Pay upon pickup selected. Pay the balance when you collect your order.",
                 "order": OrderSerializer(order).data,
             }, status=201)
 
-        payment = services.create_checkout(order, serializer.validated_data["payment_type"])
+        # Talking to PayMongo can fail for reasons the customer can act on
+        # (method not activated, bad key, amount outside limits) or that they
+        # cannot (the shop's server can't reach PayMongo). Surface both as a
+        # readable JSON error instead of an opaque 500.
+        try:
+            payment = services.create_checkout(order, serializer.validated_data["payment_type"])
+        except PayMongoError as exc:
+            log.warning("PayMongo checkout rejected for order %s: %s", order.tracking_id, exc)
+            return Response({"detail": str(exc)}, status=400)
+        except (requests.RequestException, ValueError) as exc:
+            log.exception("PayMongo unreachable for order %s", order.tracking_id)
+            return Response(
+                {"detail": f"Could not reach PayMongo to start the payment: {exc}"}, status=503,
+            )
+
         return Response({
             "method": "qrph",
             "payment_id": payment.id,
@@ -123,8 +145,15 @@ class WebhookView(APIView):
         event = request.data.get("data", {})
         attributes = event.get("attributes", {}) if isinstance(event, dict) else {}
         event_type = attributes.get("type", "")
-        resource = attributes.get("data", {}).get("attributes", {}) if isinstance(attributes, dict) else {}
+        resource_data = attributes.get("data", {}) if isinstance(attributes, dict) else {}
+        resource = resource_data.get("attributes", {}) if isinstance(resource_data, dict) else {}
+        resource_type = resource_data.get("type", "") if isinstance(resource_data, dict) else ""
+        # `payment.paid` / `payment.failed` point at the payment, which carries
+        # `payment_intent_id`. `qrph.expired` instead points at the Payment
+        # Intent itself, whose resource id *is* the intent id.
         intent_id = resource.get("payment_intent_id", "")
+        if not intent_id and resource_type == "payment_intent":
+            intent_id = resource.get("id", "")
 
         payment = Payment.objects.filter(payment_intent_id=intent_id).first()
         if not payment:
@@ -189,12 +218,21 @@ class SimulatePaymentView(APIView):
 
 
 def _signature_valid(body: bytes, signature_header: str, secret: str) -> bool:
-    """PayMongo signs webhooks as '<timestamp>,<hmac-hex>' pairs."""
+    """PayMongo signs webhooks as a comma-separated list of ``key=value`` pairs.
+
+    The current header is ``t=<unix>,te=<test-hmac>,li=<live-hmac>``; older
+    integrations used ``t=<unix>,v1=<hmac>``. The signed string is
+    ``"<timestamp>." + <raw body>``. Accept whichever digest PayMongo sends.
+    """
     try:
         parts = dict(part.split("=", 1) for part in signature_header.split(",") if "=" in part)
-        timestamp, received = parts["t"], parts.get("v1", "")
+        timestamp = parts["t"]
     except (KeyError, ValueError):
         return False
     payload = f"{timestamp}.".encode() + body
     expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, received)
+    for key in ("v1", "te", "li"):
+        received = parts.get(key, "")
+        if received and hmac.compare_digest(expected, received):
+            return True
+    return False

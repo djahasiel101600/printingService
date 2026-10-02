@@ -453,8 +453,10 @@ FRONTEND_URL=http://localhost:5173
 
 1. In PayMongo dashboard, create a webhook endpoint
 2. URL: `https://yourdomain.com/api/payments/webhook/`
-3. Select events: `payment.paid`, `payment.failed`
-4. Copy the webhook secret to your environment
+   (the short `https://yourdomain.com/webhook` also works — nginx forwards it
+   to the same endpoint, see `frontend/nginx.conf`)
+3. Select events: `payment.paid`, `payment.failed`, `qrph.expired`
+4. Copy the webhook secret to `PAYMONGO_WEBHOOK_SECRET` in your environment
 
 ### Mock Mode Behavior
 
