@@ -117,15 +117,15 @@ class PayMongoClient:
                 "image_url": next_action["code"]["image_url"],
                 "expires_at": next_action["code"]["expires_at"],
             }
-        body = {
-            "data": {
-                "attributes": {
-                    "payment_method": payment_method_id,
-                    "client_key": client_key,
-                    "return_url": return_url,
-                }
-            }
-        }
+        body_attributes = {"payment_method": payment_method_id}
+        # Only send optional fields when we actually have a value: an empty
+        # `client_key` is rejected as an invalid client key, and an empty
+        # `return_url` is worse than omitting it.
+        if client_key:
+            body_attributes["client_key"] = client_key
+        if return_url:
+            body_attributes["return_url"] = return_url
+        body = {"data": {"attributes": body_attributes}}
         data = self._request("POST", f"/payment_intents/{intent_id}/attach", body)["data"]["attributes"]
         next_action = data.get("next_action") or {}
         return {

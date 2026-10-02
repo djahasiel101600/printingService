@@ -465,6 +465,32 @@ When `PAYMONGO_MOCK_MODE=True` (default):
 - Payments are simulated (no real charges)
 - Webhooks can be triggered manually for testing
 
+> **Testing live credentials:** the "Test PayMongo Connection" button in
+> Admin → API Settings only exercises the live API when **Mock Mode is OFF**.
+> With mock mode on it hits the simulator and always passes. When mock mode is
+> off the test runs the full flow — payment intent → payment method → attach —
+> i.e. exactly what a customer's QR Ph checkout does, and it reports each step
+> separately so a failure names the step that broke.
+
+---
+
+### Diagnosing checkout failures
+
+`POST /api/payments/checkout/` never returns a bare 500. Failures come back as
+JSON so the reason is visible in the UI and the logs:
+
+| Status | Meaning |
+|--------|---------|
+| 400 | PayMongo rejected the request (message includes the API error, e.g. QR Ph not activated, invalid key, amount outside limits) |
+| 503 | The server could not reach PayMongo |
+| 502 | Unexpected error while handling the gateway response |
+
+The same message is written to the backend log, e.g.:
+
+```bash
+docker compose logs -f printservice-backend
+```
+
 ---
 
 ## 10. Email Notifications (Optional)

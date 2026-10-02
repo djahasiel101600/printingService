@@ -37,7 +37,9 @@ function StatusIcon({ status }: { status: string }) {
 
 export default function AdminSettingsPage() {
   const [epsonMockMode, setEpsonMockMode] = useState(true);
-  const [paymongoMockMode, setPaymongoMockMode] = useState(true);
+  // Default to LIVE so clicking "Test PayMongo Connection" exercises the real
+  // secret key — a mock-mode run always passes and hides credential problems.
+  const [paymongoMockMode, setPaymongoMockMode] = useState(false);
   const [code, setCode] = useState("");
   const queryClient = useQueryClient();
 
@@ -273,7 +275,9 @@ export default function AdminSettingsPage() {
           </div>
           <Alert variant={paymongoMockMode ? "default" : "warning"}>
             <AlertDescription>
-              {paymongoMockMode ? "Mock mode is ON. No real payments." : "Mock mode is OFF. Real credentials from .env will be used."}
+              {paymongoMockMode
+                ? "Mock mode is ON. No real payments. The test below uses the simulator, so it always passes."
+                : "Mock mode is OFF. Real credentials from .env will be used, and the test below exercises the live PayMongo API."}
             </AlertDescription>
           </Alert>
           <Button onClick={() => paymongoTestMutation.mutate()} disabled={paymongoTestMutation.isPending}>
@@ -286,6 +290,11 @@ export default function AdminSettingsPage() {
                 <StatusIcon status={paymongoTestMutation.data.overall ?? ""} />
                 Overall: {paymongoTestMutation.data.overall === "success" ? "All tests passed!" : "Some tests failed"}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Tested in {paymongoTestMutation.data.mock_mode
+                  ? "MOCK mode (simulated — always passes)"
+                  : "LIVE mode (real PayMongo credentials)"}.
+              </p>
               {paymongoTestMutation.data.tests && Object.entries(paymongoTestMutation.data.tests).map(([key, test]) => (
                 <div key={key} className="flex items-start gap-2 text-sm">
                   <StatusIcon status={test.status} />

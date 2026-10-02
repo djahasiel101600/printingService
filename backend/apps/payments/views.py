@@ -16,7 +16,7 @@ from apps.orders.serializers import OrderSerializer
 from apps.pricing.views import IsShopAdmin
 
 from .models import Payment, PaymentSettings
-from .paymongo import PayMongoError
+from .paymongo import PayMongoClient, PayMongoError
 from . import services
 
 log = logging.getLogger(__name__)
@@ -82,12 +82,20 @@ class CheckoutView(APIView):
         try:
             payment = services.create_checkout(order, serializer.validated_data["payment_type"])
         except PayMongoError as exc:
+            # PayMongo itself rejected the request — actionable, answer 400.
             log.warning("PayMongo checkout rejected for order %s: %s", order.tracking_id, exc)
             return Response({"detail": str(exc)}, status=400)
-        except (requests.RequestException, ValueError) as exc:
+        except requests.RequestException as exc:
             log.exception("PayMongo unreachable for order %s", order.tracking_id)
             return Response(
                 {"detail": f"Could not reach PayMongo to start the payment: {exc}"}, status=503,
+            )
+        except Exception as exc:  # noqa: BLE001 - never a bare 500 on the payment path
+            # Belt and braces: a malformed gateway response or a DB hiccup still
+            # has to explain itself rather than become "Server Error (500)".
+            log.exception("Unexpected checkout failure for order %s", order.tracking_id)
+            return Response(
+                {"detail": f"Checkout failed ({type(exc).__name__}): {exc}"}, status=502,
             )
 
         return Response({
@@ -167,29 +175,62 @@ class WebhookView(APIView):
 
 
 class PayMongoTestConnectionView(APIView):
-    """Test the PayMongo API connection with current credentials."""
+    """Test the PayMongo API connection with current credentials.
+
+    Mirrors the customer's real QR Ph checkout (intent -> payment method ->
+    attach) so a passing result means checkout will actually work. Note that
+    ``mock_mode=True`` exercises the simulator, which always succeeds and so
+    proves nothing about the live secret key.
+    """
 
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     def post(self, request):
         mock_mode = request.data.get("mock_mode")
-        from .paymongo import PayMongoClient, PayMongoError
         client = PayMongoClient(mock_mode=mock_mode if mock_mode is not None else None)
         result = {"mock_mode": client.mock_mode, "tests": {}}
+
+        intent = None
+        method = None
 
         # Test 1: Create payment intent
         try:
             intent = client.create_payment_intent(1000, "Test connection")
             result["tests"]["create_intent"] = {"status": "success", "intent_id": intent.get("id", "")}
         except Exception as exc:
-            result["tests"]["create_intent"] = {"status": "failed", "error": str(exc)[:200]}
+            result["tests"]["create_intent"] = {"status": "failed", "error": str(exc)[:300]}
 
-        # Test 2: Create payment method
+        # Test 2: Create payment method (QR Ph)
         try:
             method = client.create_payment_method(1000, "Test", "test@example.com", "09171234567")
             result["tests"]["create_payment_method"] = {"status": "success", "method_id": method.get("id", "")}
         except Exception as exc:
-            result["tests"]["create_payment_method"] = {"status": "failed", "error": str(exc)[:200]}
+            result["tests"]["create_payment_method"] = {"status": "failed", "error": str(exc)[:300]}
+
+        # Test 3: Attach — the step that produces the QR image. Checkout used to
+        # fail here even when the two tests above passed, so it must be covered.
+        if intent and method:
+            try:
+                attached = client.attach_payment_method(
+                    intent_id=intent["id"],
+                    payment_method_id=method["id"],
+                    client_key=intent.get("client_key", ""),
+                    return_url=f"{settings.FRONTEND_URL}/track",
+                )
+                has_qr = bool(attached.get("image_url"))
+                result["tests"]["attach_payment_method"] = {
+                    "status": "success" if has_qr else "failed",
+                    "intent_status": attached.get("status"),
+                    "has_qr_image": has_qr,
+                    "error": None if has_qr else "Attach succeeded but returned no QR image URL.",
+                }
+            except Exception as exc:
+                result["tests"]["attach_payment_method"] = {"status": "failed", "error": str(exc)[:300]}
+        else:
+            result["tests"]["attach_payment_method"] = {
+                "status": "skipped",
+                "error": "Skipped: the payment intent or payment method could not be created.",
+            }
 
         all_passed = all(t["status"] == "success" for t in result["tests"].values())
         result["overall"] = "success" if all_passed else "failed"
