@@ -16,9 +16,9 @@ import type { Order } from "@/lib/types";
 
 const ADMIN_STATUSES = [
   { value: "", label: "All" },
-  { value: "awaiting_payment", label: "Awaiting payment" },
   { value: "pending_review", label: "Pending review" },
   { value: "revision_requested", label: "Revision" },
+  { value: "print_cancelled", label: "Cancelled at printer" },
   { value: "approved_queued", label: "Approved / Queued" },
   { value: "printing", label: "Printing" },
   { value: "on_hold", label: "On hold" },
@@ -27,6 +27,17 @@ const ADMIN_STATUSES = [
   { value: "rejected", label: "Rejected" },
   { value: "cancelled", label: "Cancelled" },
 ];
+
+/** Things an admin should notice before opening an order. */
+function attentionFor(order: Order): string[] {
+  const flags: string[] = [];
+  if (order.status === "print_cancelled") flags.push("printer cancelled — reprint needed");
+  const blocked = order.files.filter((f) => !f.print_ready);
+  if (blocked.length) flags.push(`${blocked.length} file(s) need converting to PDF`);
+  if (order.files.some((f) => f.page_selection_active)) flags.push("page selection applied");
+  if (order.reprint_count > 0) flags.push(`reprinted ${order.reprint_count}×`);
+  return flags;
+}
 
 export default function AdminOrdersPage() {
   const queryClient = useQueryClient();
@@ -105,20 +116,42 @@ export default function AdminOrdersPage() {
         <div className="space-y-3">
           {orders.map((order) => (
             <Card key={order.id} className="transition-shadow hover:shadow-md">
-              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                <div>
+              <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
+                <div className="min-w-0">
                   <CardTitle className="text-base">
-                    <Link to={`/admin/orders/${order.id}`} className="hover:underline">{order.tracking_id}</Link>
+                    <Link to={`/admin/orders/${order.id}`} className="hover:underline">
+                      {order.tracking_id}
+                    </Link>
                   </CardTitle>
-                  <p className="text-xs text-muted-foreground">{order.client_name} · {new Date(order.created_at).toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {order.client_name} · {new Date(order.created_at).toLocaleString()}
+                  </p>
                 </div>
                 <StatusBadge status={order.status} display={order.status_display} />
               </CardHeader>
-              <CardContent className="flex items-center justify-between text-sm">
-                <p className="text-muted-foreground">{order.files.length} file(s) · ₱{order.subtotal_peso.toFixed(2)}</p>
-                <Button asChild variant="outline" size="sm">
-                  <Link to={`/admin/orders/${order.id}`}>Review</Link>
-                </Button>
+              <CardContent className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <p className="text-muted-foreground">
+                    {order.files.length} file(s) · {order.files.reduce(
+                      (total, f) => total + f.selected_page_count, 0)} page(s) ·{" "}
+                    <span className="font-medium text-foreground">
+                      ₱{order.subtotal_peso.toFixed(2)}
+                    </span>
+                  </p>
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/admin/orders/${order.id}`}>Review</Link>
+                  </Button>
+                </div>
+                {attentionFor(order).length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {attentionFor(order).map((flag) => (
+                      <li key={flag}
+                        className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-800">
+                        {flag}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </CardContent>
             </Card>
           ))}

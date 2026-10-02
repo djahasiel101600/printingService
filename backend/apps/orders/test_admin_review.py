@@ -329,6 +329,77 @@ class PreviewTests(AdminReviewTestCase):
         self.assertEqual(allowed.status_code, 200)
 
 
+class PreviewAccessTests(AdminReviewTestCase):
+    """Who can open a file — this is what broke the admin's preview/download."""
+
+    def test_signed_in_admin_needs_no_tracking_id(self):
+        """Regression: staff previewing a guest order used to be refused.
+
+        The guest-order branch demanded ?tracking_id=, which the browser can
+        only supply for the anonymous flow, so every admin click on a guest
+        order's file failed.
+        """
+        order = self.order_with_pdf(pages=2)
+        file_id = order["files"][0]["id"]
+        for query in ("", "?variant=original", "?download=1", "?variant=original&download=1"):
+            with self.subTest(query=query):
+                response = self.api.get(self.preview_url(order, file_id, query))
+                self.assertEqual(response.status_code, 200,
+                                 f"{query} -> {getattr(response, 'content', b'')[:120]}")
+                self.assertTrue(b"".join(response.streaming_content).startswith(b"%PDF"))
+
+    def test_admin_can_read_a_document_that_needs_converting(self):
+        order = self.order_with_docx()
+        file_id = order["files"][0]["id"]
+        response = self.api.get(f"/api/orders/{order['id']}/files/{file_id}/contents/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["format"], "docx")
+
+    def test_a_signed_in_client_cannot_read_someone_elses_file(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        order = self.order_with_pdf()
+        file_id = order["files"][0]["id"]
+
+        User = get_user_model()
+        User.objects.create_user(
+            username="nosy@else.com", email="nosy@else.com",
+            password="nosypass12", role=User.Role.CLIENT)
+        other = APIClient()
+        login = other.post("/api/auth/token/", {
+            "email": "nosy@else.com", "password": "nosypass12"}, format="json")
+        self.assertEqual(login.status_code, 200, login.content)
+        other.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+
+        self.assertEqual(other.get(self.preview_url(order, file_id)).status_code, 403)
+
+    def test_owner_account_can_read_their_own_file(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        User.objects.create_user(
+            username="owner@client.com", email="owner@client.com",
+            password="ownerpass12", role=User.Role.CLIENT)
+        response = self.api.post("/api/orders/", {
+            "files": [SimpleUploadedFile("mine.pdf", make_pdf(1),
+                                         content_type="application/pdf")],
+            "customer_user_id": str(User.objects.get(email="owner@client.com").id),
+            "spec": json.dumps(BASE_SPEC),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.content)
+        order = response.json()["order"]
+
+        client = APIClient()
+        login = client.post("/api/auth/token/", {
+            "email": "owner@client.com", "password": "ownerpass12"}, format="json")
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+        file_id = order["files"][0]["id"]
+        self.assertEqual(client.get(
+            f"/api/orders/{order['id']}/files/{file_id}/preview/").status_code, 200)
+
+
 class ReprintTests(AdminReviewTestCase):
     def approved_order(self) -> dict:
         order = self.order_with_pdf(pages=2)

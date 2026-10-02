@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   AlertTriangle, ChevronLeft, ChevronRight, Download, FileText, Loader2,
   RotateCw, Table2, ZoomIn, ZoomOut,
@@ -60,6 +61,34 @@ async function fetchBlobUrl(url: string): Promise<string> {
   return URL.createObjectURL(response.data);
 }
 
+/**
+ * Download a file without leaking the Authorization header into the address
+ * bar. `window.open(url)` cannot send bearer tokens, so signed-in staff would
+ * get a 403; going through axios keeps the header on the request and the blob
+ * never leaves the page. Guests still work because the tracking ID travels as
+ * a query parameter.
+ */
+async function downloadFile(
+  url: string,
+  filename: string,
+  onError: (message: string) => void,
+): Promise<void> {
+  try {
+    const response = await api.get<Blob>(url, { responseType: "blob" });
+    const href = URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Give the browser a moment to start the save before releasing the URL.
+    setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  } catch {
+    onError("The download could not be started. Please try again.");
+  }
+}
+
 export default function FilePreviewDialog({
   file, orderId, trackingId, allowVariants = false, onClose,
 }: FilePreviewDialogProps) {
@@ -67,6 +96,7 @@ export default function FilePreviewDialog({
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const [downloading, setDownloading] = useState(false);
 
   const open = Boolean(file);
 
@@ -115,9 +145,14 @@ export default function FilePreviewDialog({
   }, [blobQuery.data]);
 
   const download = useCallback(() => {
-    if (!fileId) return;
-    window.open(buildFileUrl(orderId, fileId, { variant, download: true, trackingId }), "_blank");
-  }, [fileId, orderId, variant, trackingId]);
+    if (!fileId || !file) return;
+    setDownloading(true);
+    void downloadFile(
+      buildFileUrl(orderId, fileId, { variant, trackingId }),
+      file.file_name,
+      (message) => toast.error(message),
+    ).finally(() => setDownloading(false));
+  }, [file, fileId, orderId, variant, trackingId]);
 
   const variants: FileVariant[] = useMemo(() => {
     if (!file || !allowVariants) return [];
@@ -171,8 +206,11 @@ export default function FilePreviewDialog({
               rotation={rotation} setRotation={setRotation} />
           )}
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={download}>
-              <Download className="mr-2 h-4 w-4" /> Download
+            <Button variant="outline" size="sm" onClick={download} disabled={downloading}>
+              {downloading
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <Download className="mr-2 h-4 w-4" />}
+              Download
             </Button>
             <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
           </div>
@@ -289,9 +327,17 @@ function PreviewError({ message, onRetry }: { message: string; onRetry: () => vo
 
 function DocumentBody({ query }: { query: UseQueryResult<DocumentPreview, Error> }) {
   if (query.isError) {
-    const detail = (query.error as { response?: { data?: { detail?: string } } })
-      ?.response?.data?.detail;
-    return <PreviewError message={detail ?? "We could not read this document."}
+    const error = query.error as {
+      response?: { status?: number; data?: { detail?: string } };
+    };
+    if (error?.response?.status === 404) {
+      // The endpoint was added with document previews; an older backend image
+      // has no such route. Say so instead of showing a bare "not found".
+      return <PreviewError
+        message="This server does not have document preview yet. Rebuild and restart the backend image (docker compose up -d --build), or open the file directly."
+        onRetry={() => query.refetch()} />;
+    }
+    return <PreviewError message={error?.response?.data?.detail ?? "We could not read this document."}
       onRetry={() => query.refetch()} />;
   }
   if (!query.data) {

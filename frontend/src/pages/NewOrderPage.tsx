@@ -2,10 +2,13 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Check, Search, Trash2, Upload, X } from "lucide-react";
+import { Check, Eye, Search, Trash2, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -13,10 +16,17 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
+import { formatBytes } from "@/lib/constants";
 import type { Capabilities, CustomerOption, Order, PrintSpecification, Quote } from "@/lib/types";
 import SpecFields, { DEFAULT_SPEC } from "@/components/SpecFields";
 
 type GuestMethod = "email" | "phone" | "facebook";
+
+/** Mirrors PREVIEWABLE_EXTENSIONS in backend/apps/orders/models.py. */
+const ACCEPTED_TYPES =
+  ".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.txt,.md,.csv";
+/** Extensions the printer accepts directly, so only these get a local preview. */
+const PRINTABLE_TYPES = ["pdf", "jpg", "jpeg", "png", "webp"];
 
 interface GuestDetailsProps {
   name: string;
@@ -85,6 +95,7 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
   const { user } = useAuth();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
+  const [localPreview, setLocalPreview] = useState<{ file: File; url: string } | null>(null);
   const [spec, setSpec] = useState<PrintSpecification>(DEFAULT_SPEC);
   const [guestName, setGuestName] = useState("");
   const [guestMethod, setGuestMethod] = useState<GuestMethod>("email");
@@ -197,7 +208,10 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
       <Card>
         <CardHeader>
           <CardTitle>Files</CardTitle>
-          <CardDescription>Upload PDFs or images (JPG/PNG).</CardDescription>
+          <CardDescription>
+            Upload PDFs, images (JPG/PNG/WEBP) or documents (Word, Excel,
+            PowerPoint, TXT). You can preview everything before ordering.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <label
@@ -206,26 +220,52 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
           >
             <Upload className="mb-2 h-8 w-8 text-muted-foreground" />
             <span className="text-sm font-medium">Click to upload or drag files here</span>
-            <span className="text-xs text-muted-foreground">PDF, JPG, PNG</span>
+            <span className="text-xs text-muted-foreground">
+              PDF · JPG · PNG · WEBP · DOCX · XLSX · PPTX · TXT · CSV
+            </span>
             <input
               id="file-upload"
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png"
+              accept={ACCEPTED_TYPES}
               onChange={onFileChange}
               className="hidden"
             />
           </label>
           {files.length > 0 && (
             <ul className="space-y-2">
-              {files.map((f, idx) => (
-                <li key={idx} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
-                  <span className="truncate">{f.name} <span className="text-muted-foreground">({(f.size / 1024).toFixed(0)} KB)</span></span>
-                  <button type="button" onClick={() => removeFile(idx)} className="text-destructive hover:text-destructive/80">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
+              {files.map((f, idx) => {
+                const extension = f.name.split(".").pop()?.toLowerCase() ?? "";
+                const printReady = PRINTABLE_TYPES.includes(extension);
+                return (
+                  <li key={idx}
+                    className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <span className="truncate">{f.name}{" "}
+                        <span className="text-muted-foreground">({formatBytes(f.size)})</span>
+                      </span>
+                      {!printReady && (
+                        <p className="text-[11px] text-amber-700">
+                          We&apos;ll read this for you, then print it as PDF.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {printReady && (
+                        <Button type="button" variant="ghost" size="sm"
+                          onClick={() => setLocalPreview({ file: f, url: URL.createObjectURL(f) })}>
+                          <Eye className="mr-1 h-4 w-4" /> Preview
+                        </Button>
+                      )}
+                      <button type="button" onClick={() => removeFile(idx)}
+                        className="text-destructive hover:text-destructive/80"
+                        aria-label={`Remove ${f.name}`}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>
@@ -351,6 +391,27 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
           {submitMutation.isPending ? "Submitting…" : adminMode ? "Create Order" : "Place Order"}
         </Button>
       </div>
+    <Dialog open={!!localPreview} onOpenChange={(next) => {
+        if (!next && localPreview) URL.revokeObjectURL(localPreview.url);
+        setLocalPreview(null);
+      }}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="truncate text-base">{localPreview?.file.name}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[70vh] overflow-auto rounded-md bg-muted/40">
+            {localPreview?.file.name.toLowerCase().endsWith(".pdf") ? (
+              <iframe src={localPreview.url} title={localPreview.file.name}
+                className="h-[70vh] w-full" />
+            ) : localPreview ? (
+              <div className="flex justify-center p-4">
+                <img src={localPreview.url} alt={localPreview.file.name}
+                  className="max-h-[65vh] object-contain" />
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

@@ -57,9 +57,9 @@ export default function TrackOrderPage() {
           <CardDescription>Enter your tracking ID (e.g. PSP-XXXX-XXXX) to see the current status.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onTrack} className="flex gap-3">
-            <div className="flex-1 space-y-2">
-              <Label htmlFor="tracking" className="sr-only">Tracking ID</Label>
+          <form onSubmit={onTrack} className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="tracking">Tracking ID</Label>
               <Input
                 id="tracking"
                 placeholder="PSP-XXXX-XXXX"
@@ -68,8 +68,26 @@ export default function TrackOrderPage() {
                 required
               />
             </div>
-            <Button type="submit" disabled={loading}>
-              {loading ? "Looking up…" : "Track"}
+            <div className="space-y-2">
+              <Label htmlFor="contact">Email, phone or Facebook name</Label>
+              <Input
+                id="contact"
+                placeholder="The contact you used when ordering"
+                value={contact}
+                onChange={(e) => setContact(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Needed to confirm the order is yours. Skip it if you are signed in
+                to the account that placed the order.
+              </p>
+            </div>
+            {error && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            <Button type="submit" disabled={loading} className="w-full sm:w-auto">
+              {loading ? "Looking up…" : "Track order"}
             </Button>
           </form>
         </CardContent>
@@ -85,7 +103,7 @@ export default function TrackOrderPage() {
             <StatusBadge status={result.status} display={result.status_display} />
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 text-sm sm:grid-cols-3">
+            <div className="grid gap-3 text-sm sm:grid-cols-4">
               <div>
                 <p className="text-muted-foreground">Client</p>
                 <p className="font-medium">{result.client_name}</p>
@@ -97,6 +115,10 @@ export default function TrackOrderPage() {
               <div>
                 <p className="text-muted-foreground">Balance due</p>
                 <p className="font-medium">₱{result.balance_due_peso.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Reprints</p>
+                <p className="font-medium">{result.reprint_count ?? 0}</p>
               </div>
             </div>
             <div>

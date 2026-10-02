@@ -12,7 +12,7 @@ interface PageSelectorProps {
   pageCount: number;
   /** Pages currently marked for printing (empty array = all pages). */
   selected: number[];
-  onSave: (pages: number[]) => Promise<void> | void;
+  onSave: (pages: number[]) => Promise<unknown> | void;
   saving?: boolean;
   disabled?: boolean;
   disabledReason?: string;
