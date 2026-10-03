@@ -17,6 +17,8 @@ import OrderDetailPage from "@/pages/OrderDetailPage";
 import AdminOrdersPage from "@/pages/AdminOrdersPage";
 import AdminOrderDetailPage from "@/pages/AdminOrderDetailPage";
 import AdminSettingsPage from "@/pages/AdminSettingsPage";
+import AdminPricingPage from "@/pages/AdminPricingPage";
+import QuickPrintPage from "@/pages/QuickPrintPage";
 import HomePage from "@/pages/HomePage";
 
 const queryClient = new QueryClient({
@@ -60,6 +62,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/admin/pricing"
+                element={
+                  <RequireAuth adminOnly>
+                    <AdminPricingPage />
+                  </RequireAuth>
+                }
+              />
+              <Route
                 path="/admin/orders/new"
                 element={
                   <RequireAuth adminOnly>
@@ -75,6 +85,8 @@ export default function App() {
                   </RequireAuth>
                 }
               />
+              {/* Kiosk / QR entry: scan-to-print wizard, open to guests. */}
+              <Route path="/q" element={<QuickPrintPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

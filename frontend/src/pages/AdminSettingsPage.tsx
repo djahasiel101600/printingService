@@ -7,11 +7,14 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  Printer,
+  QrCode,
   RefreshCw,
   ShieldCheck,
   Wallet,
   XCircle,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -338,6 +341,51 @@ export default function AdminSettingsPage() {
               you can record their payment from the order page when they collect.
             </AlertDescription>
           </Alert>
+        </CardContent>
+      </Card>
+
+      {/* ----------------------------------------------------- kiosk poster */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <QrCode className="h-5 w-5" />
+            Scan to print
+          </CardTitle>
+          <CardDescription>
+            Print this poster and place it by the counter — customers scan it to open the
+            quick-print wizard at{" "}
+            <code className="rounded bg-muted px-1">/q</code>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-6">
+          <div className="print-poster rounded-lg border bg-white p-5 text-black">
+            <QRCodeSVG value={`${window.location.origin}/q`} size={180} marginSize={2} />
+            <p className="mt-3 text-center text-lg font-bold tracking-wide text-black">
+              Scan to print
+            </p>
+            <p className="text-center text-xs text-black/70">
+              Upload → settings → pay, from your phone
+            </p>
+          </div>
+          <div className="space-y-3">
+            <p className="max-w-xs break-all text-sm text-muted-foreground">
+              {window.location.origin}/q
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/q`);
+                  toast.success("Quick-print link copied");
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" /> Copy link
+              </Button>
+              <Button onClick={() => window.print()}>
+                <Printer className="mr-2 h-4 w-4" /> Print poster
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

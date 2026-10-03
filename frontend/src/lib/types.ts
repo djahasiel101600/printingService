@@ -243,6 +243,37 @@ export interface ShopPaymentSettings {
   updated_at?: string;
 }
 
+/** GET/PUT /pricing/settings/ — the admin-editable global pricing knobs. */
+export interface PricingSettings {
+  duplex_discount_factor: number;
+  min_partial_percent: number;
+  fallback_price_per_side: number;
+  fallback_price_per_side_peso: number;
+  updated_at?: string;
+}
+
+/** One entry of POST /orders/estimate/ — a counted upload (never persisted). */
+export interface EstimateFile {
+  name: string;
+  file_type: "pdf" | "image" | "document";
+  page_count: number;
+  size: number;
+  print_ready: boolean;
+}
+
+export interface EstimateResponse {
+  files: EstimateFile[];
+  total_pages: number;
+}
+
+/** Paginated shape DefaultRouter + PageNumberPagination returns for lists. */
+export interface Paginated<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
 export interface CheckoutResponse {
   method: "qrph" | "pickup";
   detail?: string;

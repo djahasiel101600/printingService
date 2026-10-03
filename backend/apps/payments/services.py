@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.orders.models import Order
+from apps.pricing.models import PricingSettings
 
 from .models import Payment, PaymentSettings
 from .paymongo import PayMongoClient, PayMongoError
@@ -61,7 +62,7 @@ def create_checkout(order: Order, payment_type: str) -> Payment:
     """Create a PaymentIntent for the full amount or the required down payment,
     attach a QR Ph payment method, and return the Payment carrying the QR."""
     if payment_type == Order.PaymentType.PARTIAL:
-        min_amount = order.subtotal * settings.MIN_PARTIAL_PERCENT // 100
+        min_amount = order.subtotal * PricingSettings.get_solo().min_partial_percent // 100
         amount = max(min_amount, 100)  # PayMongo minimum is PHP 1
         label = "Down payment"
     else:

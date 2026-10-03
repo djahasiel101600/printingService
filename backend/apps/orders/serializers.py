@@ -1,4 +1,3 @@
-from django.conf import settings
 from rest_framework import serializers
 
 from apps.printing.constants import (
@@ -7,6 +6,7 @@ from apps.printing.constants import (
 )
 from apps.printing.models import PrintJob
 from apps.payments.models import Payment
+from apps.pricing.models import PricingSettings
 
 from .models import Order, OrderFile, OrderStatusHistory, PrintSpecification
 
@@ -120,7 +120,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_min_partial_peso(self, obj) -> float:
         """Smallest allowed down payment (matches payments.services.create_checkout)."""
-        return (obj.subtotal * settings.MIN_PARTIAL_PERCENT // 100) / 100
+        return (obj.subtotal * PricingSettings.get_solo().min_partial_percent // 100) / 100
 
     def get_amount_paid_peso(self, obj) -> float:
         return obj.amount_paid / 100

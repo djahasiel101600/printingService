@@ -6,16 +6,15 @@ centavos. Pricing model:
 * a PriceRule supplies the price per printed side for the
   (media_size, media_type, color_mode, print_quality) combination;
 * total sides = pages * copies;
-* double-sided printing earns the configured discount factor (settings.
-  DUPLEX_DISCOUNT_FACTOR, default 0.90) because it halves paper usage;
+* double-sided printing earns the configured discount factor
+  (PricingSettings.duplex_discount_factor, default 0.90) because it saves
+  paper;
 * rules are matched exactly first, then relaxed (quality -> type -> size)
   with "any" wildcards, so quoting never fails outright.
 """
 from dataclasses import dataclass
 
-from django.conf import settings
-
-from .models import PriceRule
+from .models import PriceRule, PricingSettings
 
 
 @dataclass
@@ -69,7 +68,9 @@ def find_rule(media_size: str, media_type: str, color_mode: str, print_quality: 
 def compute_quote(specs: list[dict]) -> Quote:
     """specs: [{'media_size','media_type','color_mode','print_quality',
     'sides','copies','page_count','label'}...] — sides uses Epson values
-    (none|long|short)."""
+    (none|long|short). Global knobs (duplex factor, fallback price) come from
+    the admin-editable PricingSettings singleton (DB), not env vars."""
+    knobs = PricingSettings.get_solo()
     lines: list[LineQuote] = []
     for spec in specs:
         page_count = max(1, int(spec.get("page_count") or 1))
@@ -81,9 +82,9 @@ def compute_quote(specs: list[dict]) -> Quote:
         double_sided = spec.get("sides") in ("long", "short")
 
         rule = find_rule(media_size, media_type, color_mode, print_quality)
-        unit_price = rule.price_per_page if rule else 500  # centavos fallback
+        unit_price = rule.price_per_page if rule else knobs.fallback_price_per_side
         if double_sided:
-            unit_price = round(unit_price * settings.DUPLEX_DISCOUNT_FACTOR)
+            unit_price = round(unit_price * knobs.duplex_discount_factor)
         sides = page_count * copies
         amount = sides * unit_price
         lines.append(LineQuote(

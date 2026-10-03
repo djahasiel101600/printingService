@@ -1,4 +1,4 @@
-import { Dumbbell, FileText, Settings } from "lucide-react";
+import { Dumbbell, FileText, Settings, Tags } from "lucide-react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "@/components/auth";
@@ -40,6 +40,17 @@ export default function AppShell() {
             >
               My Orders
             </NavLink>
+            {user?.is_shop_admin && (
+              <NavLink
+                to="/admin/pricing"
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-1.5 ${isActive ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`
+                }
+              >
+                <Tags className="mr-1 inline h-3.5 w-3.5" />
+                Pricing
+              </NavLink>
+            )}
             {user?.is_shop_admin && (
               <NavLink
                 to="/admin/settings"

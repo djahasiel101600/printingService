@@ -33,3 +33,23 @@
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
 }
+
+/* Kiosk poster: printing the admin settings page prints ONLY the QR poster
+   (Print button on the "Scan to print" card). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-poster,
+  .print-poster * {
+    visibility: visible;
+  }
+  .print-poster {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+}

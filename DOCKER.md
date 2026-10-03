@@ -43,6 +43,13 @@ Edit `.env` and at minimum set:
 * `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `FRONTEND_URL`
   — use the public hostname wired to the tunnel (e.g. `print.jdp-homelab.space`).
 
+> **Business rules are DB-backed.** `MIN_PARTIAL_PERCENT` /
+> `DUPLEX_DISCOUNT_FACTOR` only seed the `PricingSettings` row on the *first*
+> migration; after that, edit prices and payment knobs in the app at
+> **Admin → Pricing** (`/admin/pricing`). The counter's scan-to-print poster is
+> on **Admin → API Settings** ("Scan to print" card) and points customers at
+> `/q`.
+
 > **Important:** cloudflared forwards the original public hostname as the `Host`
 > header. It **must** appear in `ALLOWED_HOSTS`, otherwise Django rejects every
 > request with `400 DisallowedHost`.

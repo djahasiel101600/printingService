@@ -11,6 +11,7 @@ from .views import (
     AdminResubmitView,
     OrderCreateView,
     OrderDetailView,
+    OrderEstimateView,
     OrderFileEditView,
     OrderFilePreviewView,
     OrderFileTextPreviewView,
@@ -22,6 +23,7 @@ from .views import (
 urlpatterns = [
     path("orders/", OrderCreateView.as_view(), name="order-create"),
     path("orders/quote/", QuoteView.as_view(), name="order-quote"),
+    path("orders/estimate/", OrderEstimateView.as_view(), name="order-estimate"),
     path("orders/mine/", OrderListView.as_view(), name="order-list"),
     path("orders/<int:pk>/", OrderDetailView.as_view(), name="order-detail"),
     path("orders/<int:order_pk>/files/<int:file_pk>/edit/", OrderFileEditView.as_view(), name="order-file-edit"),

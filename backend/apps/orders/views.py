@@ -7,8 +7,10 @@ from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+from apps.pricing.models import PricingSettings
 from apps.pricing.quotation import compute_quote
 from apps.pricing.views import IsShopAdmin
 from apps.printing.services import (
@@ -43,11 +45,16 @@ def _quote_lines(quote) -> list[dict]:
 
 
 def _quote_response(quote) -> dict:
+    # min_partial_peso is in pesos (divided by 100), matching
+    # OrderSerializer.get_min_partial_peso — the old response returned
+    # centavos under this *_peso key. Knob comes from the DB-backed
+    # PricingSettings singleton instead of the MIN_PARTIAL_PERCENT env var.
+    min_partial_percent = PricingSettings.get_solo().min_partial_percent
     return {
         "lines": _quote_lines(quote),
         "subtotal": quote.subtotal,
         "subtotal_peso": quote.subtotal_peso,
-        "min_partial_peso": quote.subtotal * settings.MIN_PARTIAL_PERCENT / 100,
+        "min_partial_peso": (quote.subtotal * min_partial_percent // 100) / 100,
     }
 
 
@@ -198,6 +205,89 @@ class QuoteView(APIView):
         except (TypeError, ValueError) as exc:
             return Response({"detail": f"Invalid quote payload: {exc}"}, status=400)
         return Response(_quote_response(quote))
+
+
+class EstimateThrottle(AnonRateThrottle):
+    """Rate limit for the public page-count endpoint.
+
+    Counting pages parses the whole upload, which makes the estimate endpoint
+    the cheapest one to abuse. The app has no global DRF throttling (adding it
+    would change behaviour on every route), so this fixed per-view rate keeps
+    the protection scoped. A class-level ``rate`` also skips the
+    ``THROTTLE_RATES`` settings lookup AnonRateThrottle would otherwise do.
+    """
+
+    rate = "60/min"
+    scope = "estimate"
+
+
+class OrderEstimateView(APIView):
+    """Count pages of an upload WITHOUT creating an order (PRD FR-16).
+
+    The quick-print wizard calls this while the customer is still configuring
+    the job, so quotes use real page counts instead of guesses. Applies the
+    same extension/size limits as OrderCreateView — an estimate that passes
+    will also pass order creation — and writes nothing to the database or disk.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [EstimateThrottle]
+
+    def post(self, request):
+        files = request.FILES.getlist("files")
+        if not files:
+            return Response({"detail": "At least one file is required."}, status=400)
+
+        estimates = []
+        errors = []
+        for uploaded in files:
+            extension = file_extension(uploaded.name)
+            if extension in LEGACY_EXTENSIONS:
+                errors.append(
+                    f"{uploaded.name}: the legacy '.{extension}' format cannot be previewed or "
+                    f"printed. Please upload the modern '.{extension}x' version, or a PDF."
+                )
+                continue
+            if extension not in PREVIEWABLE_EXTENSIONS:
+                errors.append(
+                    f"{uploaded.name}: unsupported file type '.{extension or 'unknown'}'. "
+                    "Upload a PDF, an image, or a Word/Excel/PowerPoint/text document."
+                )
+                continue
+            if uploaded.size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+                errors.append(f"{uploaded.name} exceeds the {settings.MAX_UPLOAD_MB}MB limit.")
+                continue
+            if extension == "pdf":
+                file_type = OrderFile.FileType.PDF
+            elif extension in IMAGE_EXTENSIONS:
+                file_type = OrderFile.FileType.IMAGE
+            else:
+                file_type = OrderFile.FileType.DOCUMENT
+            uploaded.seek(0)
+            try:
+                page_count = count_pages(file_type.value, uploaded.read())
+            except FileEditError as exc:
+                errors.append(f"{uploaded.name}: {exc}")
+                continue
+            estimates.append({
+                "name": uploaded.name,
+                "file_type": file_type.value,
+                "page_count": page_count,
+                "size": uploaded.size,
+                # Documents are counted too, but the shop converts them to PDF
+                # before printing — mirrors OrderFile.print_ready.
+                "print_ready": file_type in {OrderFile.FileType.PDF, OrderFile.FileType.IMAGE},
+            })
+
+        # Strict like OrderCreateView: any bad file fails the whole estimate so
+        # the wizard never shows a quote that order creation would later reject.
+        if errors or not estimates:
+            return Response({"detail": "; ".join(errors) or "No valid files uploaded."}, status=400)
+        return Response({
+            "files": estimates,
+            "total_pages": sum(item["page_count"] for item in estimates),
+        })
 
 
 class OrderListView(APIView):

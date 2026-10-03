@@ -145,6 +145,8 @@ npm run dev
 - Frontend: http://localhost:5173
 - Backend API: http://127.0.0.1:8000/api
 - Django Admin: http://127.0.0.1:8000/admin
+- Quick-print wizard (what the counter QR code opens): http://localhost:5173/q
+- Admin pricing page: http://localhost:5173/admin/pricing
 
 ---
 
@@ -165,12 +167,23 @@ cp backend/.env.example backend/.env
 | `ALLOWED_HOSTS` | `127.0.0.1,localhost` | Comma-separated allowed hosts |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,...` | Frontend origins for CORS |
 
-### Business Rules
+### Business Rules (DB-backed)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MIN_PARTIAL_PERCENT` | `50` | Minimum down payment percentage |
-| `DUPLEX_DISCOUNT_FACTOR` | `0.90` | Price multiplier for double-sided printing |
+Pricing rules and the global pricing knobs live in the **database**, not the
+environment. Edit them at runtime from **Admin → Pricing** (`/admin/pricing`):
+
+- **Price rules** — price per printed side for each paper/color/quality
+  combination (seeded once with `python manage.py seed_demo`).
+- **Double-sided factor** — multiplier applied to duplex jobs (default `0.90`).
+- **Minimum down payment** — smallest QR Ph partial payment, as a % of the
+  subtotal (default `50`).
+- **Fallback price per side** — charged when no rule matches (default `500`
+  centavos / ₱5.00).
+
+The `MIN_PARTIAL_PERCENT` and `DUPLEX_DISCOUNT_FACTOR` environment variables
+are **only read once**, by migration `pricing.0002`, to seed the singleton row
+on first deploy — after that the DB value always wins, so changing the env
+vars has no effect.
 
 ### Generating a Secret Key
 
@@ -616,6 +629,8 @@ curl http://localhost:5173
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/orders/` | Create order (multipart) |
+| POST | `/api/orders/quote/` | Price a quote without creating an order |
+| POST | `/api/orders/estimate/` | Count pages of an upload (no order created) |
 | GET | `/api/orders/mine/` | List my orders |
 | GET | `/api/orders/{id}/` | Order detail |
 | GET | `/api/track/{tracking_id}/` | Public tracking |
@@ -625,6 +640,14 @@ curl http://localhost:5173
 |--------|----------|-------------|
 | POST | `/api/payments/checkout/` | Create QR Ph checkout |
 | POST | `/api/payments/webhook/` | PayMongo webhook |
+
+### Pricing
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/pricing/settings/` | Global pricing knobs (public read) |
+| PUT | `/api/pricing/settings/` | Update knobs (admin only) |
+| GET/POST | `/api/admin/pricing-rules/` | List / create price rules (admin) |
+| PATCH/DELETE | `/api/admin/pricing-rules/{id}/` | Edit / delete a price rule (admin) |
 
 ### Admin
 ---

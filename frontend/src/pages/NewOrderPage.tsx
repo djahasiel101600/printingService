@@ -20,7 +20,7 @@ import { formatBytes } from "@/lib/constants";
 import type { Capabilities, CustomerOption, Order, PrintSpecification, Quote } from "@/lib/types";
 import SpecFields, { DEFAULT_SPEC } from "@/components/SpecFields";
 
-type GuestMethod = "email" | "phone" | "facebook";
+export type GuestMethod = "email" | "phone" | "facebook";
 
 /** Mirrors PREVIEWABLE_EXTENSIONS in backend/apps/orders/models.py. */
 const ACCEPTED_TYPES =
@@ -40,8 +40,9 @@ interface GuestDetailsProps {
 }
 
 /** Shared "who is this order for" card — guests filling their own details and
- * admins entering a walk-in customer's details use the same UI. */
-function GuestDetailsCard({
+ * admins entering a walk-in customer's details use the same UI.
+ * Exported for the /q quick-print wizard. */
+export function GuestDetailsCard({
   name, method, value, onName, onMethod, onValue,
   title = "Your details",
   description = "So we can send you updates about your order.",
