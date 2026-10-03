@@ -1,9 +1,11 @@
 """Epson device-authorization tests. Network calls are mocked."""
 
+from io import BytesIO
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 from django.test import TestCase, override_settings
+from PIL import Image
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
@@ -64,11 +66,15 @@ class EpsonTokenPayloadTests(TestCase):
 
 
 class EpsonUploadFileTests(TestCase):
-    """The upload POST must be accepted by Epson's upload endpoint.
+    """The upload POST must match what openapi.spec documents for ``/data``.
 
-    Regression: sending the bytes with no ``Content-Type`` (and an unencoded
-    ``File`` name) made the endpoint answer a bodyless ``400 Bad Request``,
-    which surfaced as "All print jobs failed to submit".
+    Regression: ``File=`` used to carry the customer's own file name (spaces,
+    non-ASCII, an extension the bytes may not even have) while the spec
+    requires the literal ``1.(extension)``. Epson accepted the upload anyway
+    and only complained later, at ``/print``, with ``400 invalid_print_data`` —
+    surfaced as "All print jobs failed to submit". The body also needs an
+    explicit ``Content-Type`` from Epson's accepted set, because a request
+    with none gets a bodyless ``400``.
     """
 
     def setUp(self):
@@ -87,24 +93,47 @@ class EpsonUploadFileTests(TestCase):
 
         self.assertEqual(kwargs["headers"], {"Content-Type": "application/pdf"})
 
-    def test_upload_percent_encodes_the_file_name(self):
+    def test_file_query_is_the_documented_one_based_name(self):
+        """openapi.spec ``components.parameters.file``: format "1.(extension)".
+
+        The customer's file name must never reach the query string.
+        """
         args, _ = self._post("https://x/data?Key=k", "science activity.pdf")
 
-        self.assertEqual(args[0], "https://x/data?Key=k&File=science%20activity.pdf")
+        self.assertEqual(args[0], "https://x/data?Key=k&File=1.pdf")
+
+    def test_file_query_drops_spaces_and_non_ascii_from_the_file_name(self):
+        args, _ = self._post("https://x/data?Key=k", "Pang-ulong Noli ½.pdf")
+
+        self.assertEqual(args[0], "https://x/data?Key=k&File=1.pdf")
 
     def test_upload_uses_ampersand_when_uri_already_has_a_query(self):
         args, _ = self._post("https://x/data?Key=k&Other=1", "1.pdf")
 
         self.assertEqual(args[0], "https://x/data?Key=k&Other=1&File=1.pdf")
 
-    def test_content_type_follows_the_extension(self):
-        cases = {"a.pdf": "application/pdf", "a.jpg": "image/jpeg",
-                 "a.jpeg": "image/jpeg", "a.png": "image/png"}
+    def test_content_type_and_file_query_follow_the_payload(self):
+        # ``jpeg`` is normalised to ``jpg`` — Appendix G accepts both.
+        cases = {
+            "a.pdf": (b"%PDF-1.4 payload", "application/pdf", "File=1.pdf"),
+            "a.jpg": (b"\xff\xd8\xff\xe0payload", "image/jpeg", "File=1.jpg"),
+            "a.jpeg": (b"\xff\xd8\xff\xe0payload", "image/jpeg", "File=1.jpg"),
+            "a.png": (b"\x89PNG\r\n\x1a\npayload", "image/png", "File=1.png"),
+        }
 
-        for name, expected in cases.items():
+        for name, (content, expected_type, expected_query) in cases.items():
             with self.subTest(name=name):
-                _, kwargs = self._post("https://x/data?Key=k", name)
-                self.assertEqual(kwargs["headers"], {"Content-Type": expected})
+                args, kwargs = self._post("https://x/data?Key=k", name, content=content)
+                self.assertEqual(kwargs["headers"], {"Content-Type": expected_type})
+                self.assertEqual(args[0].rsplit("&", 1)[-1], expected_query)
+
+    def test_content_type_follows_the_bytes_when_the_file_name_lies(self):
+        """A JPEG named ".pdf" must still be declared (and named) as a JPEG."""
+        args, kwargs = self._post("https://x/data?Key=k", "scan.pdf",
+                                  content=b"\xff\xd8\xff\xe0payload")
+
+        self.assertEqual(kwargs["headers"], {"Content-Type": "image/jpeg"})
+        self.assertEqual(args[0], "https://x/data?Key=k&File=1.jpg")
 
     def test_unknown_extension_falls_back_to_sniffing_the_payload(self):
         _, kwargs = self._post("https://x/data?Key=k", "scan", content=b"\x89PNG\r\n\x1a\nrest")
@@ -116,6 +145,45 @@ class EpsonUploadFileTests(TestCase):
             with self.subTest(name=name):
                 _, kwargs = self._post("https://x/data?Key=k", name)
                 self.assertTrue(kwargs["headers"]["Content-Type"])
+
+    def test_webp_is_transcoded_to_jpeg(self):
+        """Appendix G has no WebP, so it is re-encoded instead of uploaded.
+
+        Sending it as-is made Epson answer ``400 invalid_print_data`` ("The
+        uploaded file is incorrect") the moment the order was approved.
+        """
+        buffer = BytesIO()
+        Image.new("RGBA", (8, 8), (255, 0, 0, 128)).save(buffer, "WEBP")
+
+        args, kwargs = self._post("https://x/data?Key=k", "screenshot.webp",
+                                  content=buffer.getvalue())
+
+        self.assertEqual(args[0], "https://x/data?Key=k&File=1.jpg")
+        self.assertEqual(kwargs["headers"], {"Content-Type": "image/jpeg"})
+        self.assertTrue(kwargs["data"].startswith(b"\xff\xd8\xff"), "not re-encoded to JPEG")
+
+    def test_unprintable_payload_raises_before_wasting_a_job(self):
+        with self.assertRaises(EpsonError) as ctx:
+            self._post("https://x/data?Key=k", "notes.txt", content=b"just some text")
+
+        self.assertIn("PDF, JPG and PNG", str(ctx.exception))
+
+    def test_empty_payload_is_rejected_locally(self):
+        with self.assertRaises(EpsonError) as ctx:
+            self._post("https://x/data?Key=k", "blank.pdf", content=b"")
+
+        self.assertIn("empty", str(ctx.exception))
+
+    def test_invalid_print_data_is_explained_in_the_job_error(self):
+        """The raw Epson code is unreadable in the order's status history."""
+        client = EpsonClient(mock_mode=False)
+        with patch.object(client, "_request",
+                          side_effect=EpsonError("POST /printing/jobs/x/print failed (400): "
+                                                 '{"error":"invalid_print_data"}')):
+            with self.assertRaises(EpsonError) as ctx:
+                client.execute_job("x")
+
+        self.assertIn("The uploaded file is incorrect", str(ctx.exception))
 
     def test_error_response_raises_with_status(self):
         with patch.object(self.client.session, "post") as post:

@@ -10,11 +10,12 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from urllib.parse import quote
+from io import BytesIO
 
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from PIL import Image
 
 log = logging.getLogger(__name__)
 
@@ -69,9 +70,10 @@ class EpsonClient:
     """Thin HTTP wrapper around Epson Connect API v2."""
 
     # Content types the upload endpoint accepts (openapi.spec components
-    # requestBodies ``File``). Anything outside this set is answered with an
-    # error, and a request with *no* Content-Type at all is answered with a
-    # bodyless ``400 Bad Request``.
+    # requestBodies ``File``), keyed by the extension from Appendix G
+    # ("Printable file"). Anything outside this set is answered with an error,
+    # and a request with *no* Content-Type at all is answered with a bodyless
+    # ``400 Bad Request``.
     UPLOAD_CONTENT_TYPES = {
         "pdf": "application/pdf",
         "jpg": "image/jpeg",
@@ -309,39 +311,98 @@ class EpsonClient:
         data = self._request("POST", "/printing/jobs", json_body=body)
         return EpsonJobResult(job_id=data["jobId"], upload_uri=data["uploadUri"])
 
-    def _upload_content_type(self, file_name: str, content: bytes) -> str:
-        """Pick the Content-Type Epson's upload endpoint will accept.
+    @staticmethod
+    def _sniff_extension(content: bytes) -> str:
+        """Identify the payload from its magic bytes.
 
-        Epson answers a request without a Content-Type with an empty ``400``,
-        so this must never return ``""``. Fall back to sniffing the payload
-        when the extension is missing or unknown.
+        The customer's file name is not evidence: it can claim an extension the
+        bytes do not have, and Epson validates the *data* — a mismatch surfaces
+        as ``invalid_print_data`` when the job is released.
         """
-        suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-        if suffix in self.UPLOAD_CONTENT_TYPES:
-            return self.UPLOAD_CONTENT_TYPES[suffix]
         if content[:4] == b"%PDF":
-            return self.UPLOAD_CONTENT_TYPES["pdf"]
+            return "pdf"
         if content[:3] == b"\xff\xd8\xff":
-            return self.UPLOAD_CONTENT_TYPES["jpg"]
+            return "jpg"
         if content[:8] == b"\x89PNG\r\n\x1a\n":
-            return self.UPLOAD_CONTENT_TYPES["png"]
-        return "application/octet-stream"
+            return "png"
+        if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+            return "webp"
+        if content[:6] in (b"GIF87a", b"GIF89a"):
+            return "gif"
+        return ""
+
+    @staticmethod
+    def _transcode_to_jpeg(content: bytes, file_name: str) -> bytes:
+        """Re-encode an image Epson cannot print (WebP, GIF, …) as JPEG.
+
+        Returns ``b""`` when the payload is not an image, so the caller can
+        report a useful error instead of uploading bytes the printer rejects.
+        """
+        try:
+            with Image.open(BytesIO(content)) as opened:
+                # JPEG has no alpha channel: flatten transparency onto white
+                # instead of the black it would otherwise print as.
+                if opened.mode in ("RGBA", "LA", "PA") or (
+                    opened.mode == "P" and "transparency" in opened.info
+                ):
+                    rgba = opened.convert("RGBA")
+                    image = Image.new("RGB", rgba.size, (255, 255, 255))
+                    image.paste(rgba, mask=rgba.getchannel("A"))
+                else:
+                    image = opened.convert("RGB")
+                buffer = BytesIO()
+                image.save(buffer, format="JPEG", quality=95)
+        except Exception:  # noqa: BLE001 - best effort; the caller reports it
+            log.warning("Could not transcode '%s' for the printer", file_name, exc_info=True)
+            return b""
+        log.info("Transcoded '%s' to JPEG for the printer", file_name)
+        return buffer.getvalue()
+
+    def _prepare_payload(self, file_name: str, content: bytes) -> tuple[bytes, str]:
+        """Return the bytes and Appendix G extension to send to ``/data``.
+
+        WebP is offered by the upload form but is missing from Appendix G, so
+        it is transcoded rather than pushed at a printer that would answer
+        ``400 invalid_print_data``.
+        """
+        if not content:
+            raise EpsonError(f"Refusing to upload '{file_name}': the file is empty.")
+        extension = self._sniff_extension(content)
+        if not extension:
+            extension = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        if extension == "jpeg":
+            extension = "jpg"
+        if extension in self.UPLOAD_CONTENT_TYPES:
+            return content, extension
+        converted = self._transcode_to_jpeg(content, file_name)
+        if not converted:
+            raise EpsonError(
+                f"'{file_name}' is not a printable file. The printer accepts PDF, "
+                "JPG and PNG (Epson Appendix G) — convert it and replace the file "
+                "before releasing the order."
+            )
+        return converted, "jpg"
 
     def upload_file(self, upload_uri: str, file_name: str, content: bytes) -> None:
-        """POST the binary to the job's uploadUri with ``&File=<name>``.
+        """POST the binary to the job's uploadUri with ``&File=1.<ext>``.
 
-        Two things matter here and both were wrong before: the ``File`` name
-        must be percent-encoded (it comes from the customer's upload and can
-        contain spaces or non-ASCII), and the request must carry an explicit
-        ``Content-Type`` from Epson's accepted set — a request without one is
-        rejected with a bodyless ``400 Bad Request``.
+        Three things matter here and all three were wrong before: the ``File``
+        query value must be exactly ``1.(extension)`` (openapi.spec
+        ``components.parameters.file``) and never the customer's own file name,
+        which carries spaces and non-ASCII characters and can claim an
+        extension the payload does not have — Epson stores it regardless and
+        then rejects the job with ``invalid_print_data`` ("The uploaded file is
+        incorrect") when ``/print`` is called. The payload also needs an
+        explicit ``Content-Type`` from Epson's accepted set, because a request
+        with none is answered with a bodyless ``400 Bad Request``.
         """
         if self.mock_mode:
             return
+        prepared, extension = self._prepare_payload(file_name, content)
         separator = "&" if "?" in upload_uri else "?"
-        url = f"{upload_uri}{separator}File={quote(file_name)}"
-        headers = {"Content-Type": self._upload_content_type(file_name, content)}
-        response = self.session.post(url, data=content, headers=headers, timeout=300)
+        url = f"{upload_uri}{separator}File=1.{extension}"
+        headers = {"Content-Type": self.UPLOAD_CONTENT_TYPES[extension]}
+        response = self.session.post(url, data=prepared, headers=headers, timeout=300)
         if response.status_code >= 400:
             raise EpsonError(f"File upload failed ({response.status_code}): {response.text[:300]}")
 
@@ -350,7 +411,18 @@ class EpsonClient:
         if self.mock_mode:
             _mock_state.advance(job_id)
             return
-        self._request("POST", f"/printing/jobs/{job_id}/print")
+        try:
+            self._request("POST", f"/printing/jobs/{job_id}/print")
+        except EpsonError as exc:
+            if "invalid_print_data" in str(exc):
+                # Surface the spec's plain-language meaning instead of the raw
+                # error string in the order's status history.
+                raise EpsonError(
+                    f"{exc} — the printer rejected the uploaded file "
+                    '(Epson: "The uploaded file is incorrect"). Check the file '
+                    "format (PDF, JPG or PNG) and reprint."
+                ) from exc
+            raise
 
     def cancel_job(self, job_id: str) -> None:
         if self.mock_mode:
