@@ -14,6 +14,7 @@ whole checkout path is exercised without real credentials.
 """
 import hashlib
 import hmac
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import requests
@@ -24,6 +25,7 @@ from apps.orders.models import Order
 
 from .models import Payment
 from .paymongo import PayMongoClient, PayMongoError
+from .services import parse_expiry
 from .views import _signature_valid
 
 
@@ -42,7 +44,9 @@ def _live_paymongo_response(method, path, payload=None):
             "status": "awaiting_next_action",
             "next_action": {"type": "display", "code": {
                 "image_url": "data:image/png;base64,LIVERESPONSE==",
-                "expires_at": 1800000000,
+                # Live PayMongo returns the QR expiry as an ISO-8601 *string*,
+                # not a Unix integer — the shape that used to raise TypeError.
+                "expires_at": "2026-10-03T08:17:56.000Z",
             }},
         }}}
     raise AssertionError(f"unexpected PayMongo path: {path}")
@@ -178,6 +182,9 @@ class LiveCheckoutFlowTests(TestCase):
         self.assertEqual(body["qr_image_url"], "data:image/png;base64,LIVERESPONSE==")
         self.assertFalse(body["mock_mode"])
         self.assertEqual(body["amount"], 1800)
+        # The ISO-8601 string expiry is stored, not rejected: this is the exact
+        # shape that used to blow up as a TypeError and return a 502.
+        self.assertIsNotNone(body["expires_at"])
 
     @override_settings(PAYMONGO_MOCK_MODE=False)
     def test_live_attach_payload_matches_the_documented_shape(self):
@@ -298,3 +305,65 @@ class WebhookSignatureTests(TestCase):
 
     def test_tampered_body_is_rejected(self):
         self.assertFalse(_signature_valid(b"{}", "t=1,te=deadbeef", "whsec_test"))
+
+
+class QrExpiryParsingTests(TestCase):
+    """The live PayMongo QR expiry is an ISO-8601 string, not a Unix integer.
+
+    This pins the incident: feeding the string straight into
+    ``datetime.fromtimestamp`` raised ``TypeError: 'str' object cannot be
+    interpreted as an integer`` and turned every live checkout into a 502
+    *after* PayMongo had already generated the QR code.
+    """
+
+    def test_iso8601_string_is_parsed(self):
+        """The exact shape live PayMongo returns."""
+        expires = parse_expiry("2026-10-03T08:17:56.000Z")
+        self.assertIsNotNone(expires)
+        self.assertEqual(expires, datetime(2026, 10, 3, 8, 17, 56, tzinfo=timezone.utc))
+
+    def test_numeric_string_is_treated_as_unix_seconds(self):
+        self.assertEqual(
+            parse_expiry("1800000000"),
+            datetime.fromtimestamp(1800000000, tz=timezone.utc),
+        )
+
+    def test_integer_timestamp_still_works(self):
+        """Mock mode and older API versions send a plain integer."""
+        self.assertEqual(parse_expiry(1800000000), parse_expiry("1800000000"))
+
+    def test_empty_and_missing_values_are_none(self):
+        self.assertIsNone(parse_expiry(None))
+        self.assertIsNone(parse_expiry(""))
+
+    def test_unparseable_value_does_not_raise(self):
+        """An unknown format degrades to None instead of failing checkout."""
+        self.assertIsNone(parse_expiry("soon"))
+        self.assertIsNone(parse_expiry(True))
+
+
+class QrImageNormalisationTests(TestCase):
+    """Whatever PayMongo returns must render in the frontend's ``<img>``."""
+
+    def test_bare_base64_blob_is_wrapped_as_a_data_url(self):
+        self.assertEqual(
+            PayMongoClient._normalise_qr_image("iVBORw0KGgo=="),
+            "data:image/png;base64,iVBORw0KGgo==",
+        )
+
+    def test_whitespace_inside_blob_is_stripped(self):
+        self.assertEqual(
+            PayMongoClient._normalise_qr_image("iVBOR\nw0KG\ngo=="),
+            "data:image/png;base64,iVBORw0KGgo==",
+        )
+
+    def test_existing_data_and_http_urls_pass_through(self):
+        for value in (
+            "data:image/png;base64,LIVERESPONSE==",
+            "https://cdn.paymongo.com/qr.png",
+        ):
+            self.assertEqual(PayMongoClient._normalise_qr_image(value), value)
+
+    def test_empty_value_is_empty_string(self):
+        self.assertEqual(PayMongoClient._normalise_qr_image(""), "")
+        self.assertEqual(PayMongoClient._normalise_qr_image(None), "")

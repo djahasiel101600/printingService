@@ -37,6 +37,23 @@ class PayMongoClient:
         self.secret_key = settings.PAYMONGO_SECRET_KEY
 
     # ------------------------------------------------------------------ http
+    @staticmethod
+    def _normalise_qr_image(url: str) -> str:
+        """Ensure the QR value is something an ``<img src>`` can render.
+
+        PayMongo documents ``next_action.code.image_url`` as "a Base64-encoded
+        string". In practice it is normally a full ``data:image/...`` URL, but
+        when it is a bare Base64 blob the frontend would show a broken image
+        instead of a scannable QR Ph code. Pass through anything already
+        renderable (data/HTTP URLs); prefix only a bare blob.
+        """
+        value = (url or "").strip()
+        if not value:
+            return ""
+        if value.startswith(("data:", "http://", "https://")):
+            return value
+        return "data:image/png;base64," + "".join(value.split())
+
     def _auth_header(self) -> dict:
         encoded = base64.b64encode(f"{self.secret_key}:".encode()).decode()
         return {"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
@@ -131,7 +148,9 @@ class PayMongoClient:
         return {
             "status": data.get("status"),
             "next_action": next_action,
-            "image_url": (next_action.get("code") or {}).get("image_url", ""),
+            "image_url": self._normalise_qr_image(
+                (next_action.get("code") or {}).get("image_url", "")
+            ),
             "expires_at": (next_action.get("code") or {}).get("expires_at"),
         }
 

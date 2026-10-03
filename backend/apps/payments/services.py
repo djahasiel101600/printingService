@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.orders.models import Order
 
@@ -13,6 +14,47 @@ from .models import Payment, PaymentSettings
 from .paymongo import PayMongoClient, PayMongoError
 
 log = logging.getLogger(__name__)
+
+
+def parse_expiry(value) -> datetime | None:
+    """Normalise a PayMongo QR expiry into an aware ``datetime``.
+
+    Live PayMongo returns ``next_action.code.expires_at`` as an **ISO-8601
+    string** (e.g. ``"2026-10-03T08:17:56.000Z"``), while mock mode (and some
+    older API versions) use a Unix timestamp — an int, or occasionally a
+    numeric string. ``datetime.fromtimestamp`` only accepts the numeric form,
+    so passing the live string straight through raised ``TypeError: 'str'
+    object cannot be interpreted as an integer`` and turned every live checkout
+    into a 502 *after* PayMongo had already generated the QR. Accept every
+    shape and degrade to ``None`` rather than failing the checkout on an
+    unknown format.
+    """
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+
+    seconds: float | None = None
+    if isinstance(value, (int, float)):
+        seconds = value
+    elif isinstance(value, str):
+        try:
+            seconds = float(value)
+        except ValueError:
+            parsed = parse_datetime(value.strip())
+            if parsed is None:
+                log.warning("Unrecognised PayMongo QR expiry value: %r", value)
+                return None
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+            return parsed
+    else:
+        log.warning("Unrecognised PayMongo QR expiry type: %r", type(value))
+        return None
+
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.get_current_timezone())
+    except (OverflowError, OSError, ValueError) as exc:
+        log.warning("Could not interpret PayMongo QR expiry %r: %s", value, exc)
+        return None
 
 
 def create_checkout(order: Order, payment_type: str) -> Payment:
@@ -48,9 +90,15 @@ def create_checkout(order: Order, payment_type: str) -> Payment:
         return_url=f"{settings.FRONTEND_URL}/track",
     )
 
-    expires_at = None
-    if attached.get("expires_at"):
-        expires_at = timezone.datetime.fromtimestamp(attached["expires_at"], tz=timezone.get_current_timezone())
+    # A checkout without a QR image is useless to the customer: surface it as an
+    # actionable error instead of showing an empty placeholder they cannot pay.
+    qr_image_url = attached.get("image_url") or ""
+    if not qr_image_url:
+        raise PayMongoError(
+            "PayMongo attached the payment method but returned no QR Ph code image."
+        )
+
+    expires_at = parse_expiry(attached.get("expires_at"))
 
     payment = Payment.objects.create(
         order=order,
@@ -58,7 +106,7 @@ def create_checkout(order: Order, payment_type: str) -> Payment:
         amount=amount,
         method="qrph",
         status=Payment.Status.PENDING,
-        qr_image_url=attached.get("image_url", ""),
+        qr_image_url=qr_image_url,
         checkout_expires_at=expires_at,
         raw_response={"attach": attached},
     )
