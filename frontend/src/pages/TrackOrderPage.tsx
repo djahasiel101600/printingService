@@ -166,6 +166,7 @@ export default function TrackOrderPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
       )}
     </div>
   );
