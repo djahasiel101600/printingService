@@ -1,9 +1,13 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { FileText, PackageOpen } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { AsyncBoundary } from "@/components/AsyncBoundary";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/EmptyState";
+import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAuth } from "@/components/auth";
 import { api, loadGuestOrders } from "@/lib/api";
@@ -51,29 +55,57 @@ export default function MyOrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">My Orders</h1>
-          {!user && (
-            <p className="text-sm text-muted-foreground">
-              Orders placed on this device without an account.
-            </p>
-          )}
-        </div>
-        <Button asChild>
-          <Link to="/order">New Order</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="My Orders"
+        description={!user && "Orders placed on this device without an account."}
+        actions={
+          <Button asChild>
+            <Link to="/order">
+              <FileText className="h-4 w-4" />
+              New Order
+            </Link>
+          </Button>
+        }
+      />
 
-      {isLoading ? (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={user ? myOrdersQuery.error : null}
+        isEmpty={(orders?.length ?? 0) === 0}
+        onRetry={() => myOrdersQuery.refetch()}
+        skeleton={
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
+        }
+        empty={
+          <EmptyState
+            icon={PackageOpen}
+            title={user ? "You haven't placed any orders yet" : "No orders on this device yet"}
+            description={
+              user
+                ? "Upload a file, choose your settings, and we'll review it before printing."
+                : "Orders placed without an account are saved on this device."
+            }
+            action={
+              <div className="flex flex-wrap justify-center gap-3">
+                <Button asChild>
+                  <Link to="/order">Place your first order</Link>
+                </Button>
+                {!user && (
+                  <Button asChild variant="outline">
+                    <Link to="/login">Log in to see account orders</Link>
+                  </Button>
+                )}
+              </div>
+            }
+          />
+        }
+      >
         <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-      ) : orders && orders.length > 0 ? (
-        <div className="space-y-3">
-          {orders.map((order) => (
+          {orders?.map((order) => (
             <Card key={order.id} className="transition-shadow hover:shadow-md">
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
                 <div>
@@ -86,13 +118,15 @@ export default function MyOrdersPage() {
                     {new Date(order.created_at).toLocaleString()}
                   </p>
                 </div>
-                <StatusBadge status={order.status} display={order.status_display} />
+                {/* No `display` override: the customer reads our wording, not
+                    the backend's choice label. */}
+                <StatusBadge status={order.status} />
               </CardHeader>
-              <CardContent className="flex items-center justify-between text-sm">
+              <CardContent className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <div className="text-muted-foreground">
                   {order.files.length} file(s) · ₱{order.subtotal_peso.toFixed(2)}
                   {order.balance_due_peso > 0 && (
-                    <span className="ml-2 text-amber-600">
+                    <span className="ml-2 text-attention">
                       (balance: ₱{order.balance_due_peso.toFixed(2)})
                     </span>
                   )}
@@ -104,27 +138,7 @@ export default function MyOrdersPage() {
             </Card>
           ))}
         </div>
-      ) : (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-muted-foreground">
-              {user
-                ? "You haven't placed any orders yet."
-                : "No orders found on this device yet."}
-            </p>
-            <div className="mt-4 flex justify-center gap-3">
-              <Button asChild>
-                <Link to="/order">Place your first order</Link>
-              </Button>
-              {!user && (
-                <Button asChild variant="outline">
-                  <Link to="/login">Log in to see account orders</Link>
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      </AsyncBoundary>
     </div>
   );
 }

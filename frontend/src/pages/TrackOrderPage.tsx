@@ -8,6 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { OrderStatusBanner } from "@/components/OrderStatusBanner";
+import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
 import type { TrackResult } from "@/lib/types";
@@ -51,12 +53,12 @@ export default function TrackOrderPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader
+        title="Track your order"
+        description="Enter your tracking ID (e.g. PSP-XXXX-XXXX) to see the current status."
+      />
       <Card>
-        <CardHeader>
-          <CardTitle>Track your order</CardTitle>
-          <CardDescription>Enter your tracking ID (e.g. PSP-XXXX-XXXX) to see the current status.</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <form onSubmit={onTrack} className="space-y-3">
             <div className="space-y-2">
               <Label htmlFor="tracking">Tracking ID</Label>
@@ -81,8 +83,10 @@ export default function TrackOrderPage() {
                 to the account that placed the order.
               </p>
             </div>
+            {/* role=alert so a screen reader announces the failed lookup rather
+                than leaving the form silently unchanged. */}
             {error && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {error}
               </p>
             )}
@@ -94,13 +98,18 @@ export default function TrackOrderPage() {
       </Card>
 
       {result && (
-        <Card>
+        <div className="space-y-4">
+          {/* The banner explains the status in words and shows the journey,
+              instead of leaving a colour-coded pill to do all the talking. */}
+          <OrderStatusBanner status={result.status} trackingId={result.tracking_id} />
+
+          <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle>{result.tracking_id}</CardTitle>
               <CardDescription>Submitted {new Date(result.created_at).toLocaleString()}</CardDescription>
             </div>
-            <StatusBadge status={result.status} display={result.status_display} />
+            <StatusBadge status={result.status} />
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 text-sm sm:grid-cols-4">

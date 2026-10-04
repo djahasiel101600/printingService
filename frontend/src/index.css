@@ -22,6 +22,21 @@
     --input: 32 15% 84%;
     --ring: 24 70% 45%;
     --radius: 0.625rem;
+
+    /* Semantic status tones. Status colour is a TOKEN, never a hardcoded hex:
+       the badge, the order banner, the stepper and the admin queue all read
+       these, so re-theming the shop happens in exactly one place. Each is
+       paired with a `-foreground` for text on a solid fill. */
+    --info: 199 89% 42%;
+    --info-foreground: 199 90% 98%;
+    --progress: 245 58% 51%;
+    --progress-foreground: 245 60% 98%;
+    --attention: 32 90% 45%;
+    --attention-foreground: 32 95% 98%;
+    --success: 142 62% 36%;
+    --success-foreground: 140 60% 98%;
+    --danger: 0 72% 45%;
+    --danger-foreground: 0 0% 98%;
   }
 
   * {

@@ -34,6 +34,28 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Semantic status tones (see index.css). Deliberately NOT shades of
+        // primary: order status must never be confused with a brand action.
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
+        progress: {
+          DEFAULT: "hsl(var(--progress))",
+          foreground: "hsl(var(--progress-foreground))",
+        },
+        attention: {
+          DEFAULT: "hsl(var(--attention))",
+          foreground: "hsl(var(--attention-foreground))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        danger: {
+          DEFAULT: "hsl(var(--danger))",
+          foreground: "hsl(var(--danger-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
