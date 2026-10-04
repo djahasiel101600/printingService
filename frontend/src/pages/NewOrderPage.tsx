@@ -96,6 +96,8 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
   const { user } = useAuth();
   const navigate = useNavigate();
   const [files, setFiles] = useState<File[]>([]);
+  /** Orientation only affects picture files, so the control follows the uploads. */
+  const hasImages = files.some((file) => /\.(jpe?g|png|webp)$/i.test(file.name));
   const [localPreview, setLocalPreview] = useState<{ file: File; url: string } | null>(null);
   const [spec, setSpec] = useState<PrintSpecification>(DEFAULT_SPEC);
   const [guestName, setGuestName] = useState("");
@@ -283,7 +285,8 @@ export default function NewOrderPage({ adminMode = false }: { adminMode?: boolea
               {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
           ) : (
-            <SpecFields capabilities={capabilities} value={spec} onChange={setSpec} />
+            <SpecFields capabilities={capabilities} value={spec} onChange={setSpec}
+              showOrientation={hasImages} />
           )}
         </CardContent>
       </Card>

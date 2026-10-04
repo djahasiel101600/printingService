@@ -17,6 +17,7 @@ import OrderDetailPage from "@/pages/OrderDetailPage";
 import AdminOrdersPage from "@/pages/AdminOrdersPage";
 import AdminOrderDetailPage from "@/pages/AdminOrderDetailPage";
 import AdminSettingsPage from "@/pages/AdminSettingsPage";
+import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminPricingPage from "@/pages/AdminPricingPage";
 import QuickPrintPage from "@/pages/QuickPrintPage";
 import HomePage from "@/pages/HomePage";
@@ -45,10 +46,11 @@ export default function App() {
               {/* No RequireAuth: guests who just placed an order open their
                   confirmation page by proving ownership with the tracking ID. */}
               <Route path="/orders/:id" element={<OrderDetailPage />} />
+              {/* The review queue: admins *and* approvers (staffOnly). */}
               <Route
                 path="/admin"
                 element={
-                  <RequireAuth adminOnly>
+                  <RequireAuth staffOnly>
                     <AdminOrdersPage />
                   </RequireAuth>
                 }
@@ -69,6 +71,15 @@ export default function App() {
                   </RequireAuth>
                 }
               />
+              {/* User management: owner-only (create approvers/admins). */}
+              <Route
+                path="/admin/users"
+                element={
+                  <RequireAuth adminOnly>
+                    <AdminUsersPage />
+                  </RequireAuth>
+                }
+              />
               <Route
                 path="/admin/orders/new"
                 element={
@@ -80,7 +91,7 @@ export default function App() {
               <Route
                 path="/admin/orders/:id"
                 element={
-                  <RequireAuth adminOnly>
+                  <RequireAuth staffOnly>
                     <AdminOrderDetailPage />
                   </RequireAuth>
                 }

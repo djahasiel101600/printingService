@@ -190,10 +190,17 @@ class PageSelectionTests(AdminReviewTestCase):
                                  {"pages": []}, format="json")
         self.assertEqual(cleared.status_code, 200, cleared.content)
         restored = cleared.json()["order"]["files"][0]
+        # All four pages are back...
         self.assertEqual(restored["selected_pages"], [])
-        self.assertFalse(restored["has_final_file"])
         self.assertFalse(restored["page_selection_active"])
         self.assertEqual(restored["page_selection_label"], "All 4 pages")
+        # ...and the prepared artefact still exists, because "no selection"
+        # now means "send every page, fitted onto the paper's printable area"
+        # rather than "send the raw upload" (services/print_prep.py).
+        self.assertTrue(restored["has_final_file"])
+        final = self.api.get(self.preview_url(order, order_file["id"], "?variant=final"))
+        self.assertEqual(final.status_code, 200)
+        self.read_pdf(final, 4)
 
     def test_selecting_every_page_matches_selecting_none(self):
         order = self.order_with_pdf(pages=3)

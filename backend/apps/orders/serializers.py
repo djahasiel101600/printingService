@@ -8,15 +8,17 @@ from apps.printing.models import PrintJob
 from apps.payments.models import Payment
 from apps.pricing.models import PricingSettings
 
-from .models import Order, OrderFile, OrderStatusHistory, PrintSpecification
+from .models import (
+    ORIENTATIONS, Order, OrderFile, OrderFileVersion, OrderStatusHistory, PrintSpecification,
+)
 
 
 class PrintSpecificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrintSpecification
         fields = ["id", "order_file", "media_size", "media_type", "color_mode", "sides",
-                  "print_quality", "copies", "borderless", "source", "reverse_order",
-                  "collate", "free_text_instructions"]
+                  "print_quality", "copies", "borderless", "orientation", "source",
+                  "reverse_order", "collate", "free_text_instructions"]
 
     def validate_copies(self, value):
         if not 1 <= value <= 99:
@@ -30,18 +32,35 @@ class PrintSpecificationSerializer(serializers.ModelSerializer):
         valid_sides = {code for code, _ in EPSON_DOUBLE_SIDED}
         valid_quality = {code for code, _ in EPSON_PAPER_QUALITIES}
         valid_sources = {code for code, _ in EPSON_PAPER_SOURCES}
+        valid_orientations = {code for code, _ in ORIENTATIONS}
         for field, allowed in (
             ("media_size", valid_sizes), ("media_type", valid_types),
             ("color_mode", valid_colors), ("sides", valid_sides),
             ("print_quality", valid_quality), ("source", valid_sources),
+            ("orientation", valid_orientations),
         ):
             if attrs.get(field) and attrs[field] not in allowed:
                 raise serializers.ValidationError({field: f"Must be one of: {', '.join(sorted(allowed))}"})
         return attrs
 
 
+class OrderFileVersionSerializer(serializers.ModelSerializer):
+    version_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderFileVersion
+        fields = ["id", "version_number", "version_label", "file_name", "file_type",
+                  "content_type", "size", "page_count", "file",
+                  "created_at"]
+        read_only_fields = fields
+
+    def get_version_label(self, obj) -> str:
+        return f"v{obj.version_number} · {obj.file_name}"
+
+
 class OrderFileSerializer(serializers.ModelSerializer):
     specification = PrintSpecificationSerializer(read_only=True)
+    versions = OrderFileVersionSerializer(many=True, read_only=True)
     has_edits = serializers.SerializerMethodField()
     has_final_file = serializers.SerializerMethodField()
     # Page selection: what the shop decided to actually put in the printer.
@@ -52,15 +71,29 @@ class OrderFileSerializer(serializers.ModelSerializer):
     page_selection_label = serializers.CharField(read_only=True)
     page_selection_active = serializers.BooleanField(read_only=True)
     print_ready = serializers.BooleanField(read_only=True)
+    # Human description of the area the printer can actually reach on this
+    # sheet — every file is fitted inside it before printing.
+    print_area = serializers.SerializerMethodField()
+
+    def get_print_area(self, obj) -> str:
+        from .services.print_prep import print_area_label
+
+        spec = getattr(obj, "specification", None)
+        return print_area_label(
+            getattr(spec, "media_size", None) or "ps_a4",
+            bool(getattr(spec, "borderless", False)),
+        )
 
     class Meta:
         model = OrderFile
         fields = ["id", "file_name", "file_type", "content_type", "size", "page_count",
                   "edit_actions", "has_edits", "file", "edited_file", "final_file",
-                  "has_final_file", "replaced_by_admin", "specification",
+                  "has_final_file", "replaced_by_admin", "rendered_by_admin",
+                  "current_version", "versions",
+                  "specification",
                   "page_selection", "selected_pages", "selected_page_count",
                   "page_selection_label", "page_selection_active", "print_ready",
-                  "uploaded_at"]
+                  "print_area", "uploaded_at"]
         read_only_fields = fields
 
     def get_has_edits(self, obj) -> bool:

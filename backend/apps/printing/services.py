@@ -12,6 +12,7 @@ import logging
 from django.utils import timezone
 
 from apps.orders.models import Order
+from apps.orders.services.print_prep import prepare_order_for_print
 
 from .constants import EPSON_STATUS_LABELS, EPSON_STATUS_TO_ORDER_STATUS
 from .epson import EpsonClient, EpsonError
@@ -57,7 +58,11 @@ def submit_order_to_printer(
     """
     client = EpsonClient()
     printer_name = _safe_printer_name(client)
-    files = order.files.all() if order_files is None else order_files
+    files = list(order.files.all() if order_files is None else order_files)
+    # Single choke point for every release path (approve, reprint, resubmit):
+    # bake the fit onto each paper's printable area, plus the page selection,
+    # into the file that is about to be uploaded. See orders.services.print_prep.
+    prepare_order_for_print(order, order_files=files)
     jobs: list[PrintJob] = []
     for order_file in files:
         spec = getattr(order_file, "specification", None)

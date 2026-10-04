@@ -165,6 +165,19 @@ export const SIDES_LABELS: Record<string, string> = {
   short: "Double-sided (flip short edge)",
 };
 
+/**
+ * Sheet orientation for picture files. PDFs and Word documents keep their own
+ * page layout — the shop applies this to the picture before printing.
+ */
+export const ORIENTATION_LABELS: Record<string, string> = {
+  portrait: "Portrait",
+  landscape: "Landscape",
+};
+
+export function orientationLabel(value: string): string {
+  return ORIENTATION_LABELS[value] ?? value;
+}
+
 export function paperSizeLabel(code: string): string {
   return PAPER_SIZE_LABELS[code] ?? code;
 }

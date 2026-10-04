@@ -11,6 +11,10 @@ class User(AbstractUser):
 
     class Role(models.TextChoices):
         CLIENT = "client", "Client"
+        # Works the review queue (approve / reject / request revision / release
+        # to the printer) but cannot touch shop configuration: pricing, printer
+        # credentials, payment settings or other staff accounts.
+        APPROVER = "approver", "Approver (print orders)"
         ADMIN = "admin", "Admin / Staff"
 
     email = models.EmailField(unique=True)
@@ -26,4 +30,24 @@ class User(AbstractUser):
 
     @property
     def is_shop_admin(self) -> bool:
+        """Owner-level access: shop configuration, staff accounts, money."""
         return self.role == self.Role.ADMIN or self.is_superuser
+
+    @property
+    def is_approver(self) -> bool:
+        return self.role == self.Role.APPROVER
+
+    @property
+    def can_review_orders(self) -> bool:
+        """Everyone who may work the review queue (PRD §4.2).
+
+        Approvers were added beside admins so a shop can hand the print
+        approval queue to a second person without giving them the pricing
+        table, the PayMongo/Epson credentials or the staff list.
+        """
+        return self.is_shop_admin or self.is_approver
+
+    @property
+    def is_staff_member(self) -> bool:
+        """Any shop-side account (admins + approvers), clients excluded."""
+        return self.role in {self.Role.ADMIN, self.Role.APPROVER} or self.is_superuser

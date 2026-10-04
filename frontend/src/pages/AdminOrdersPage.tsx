@@ -35,6 +35,10 @@ function attentionFor(order: Order): string[] {
   const blocked = order.files.filter((f) => !f.print_ready);
   if (blocked.length) flags.push(`${blocked.length} file(s) need converting to PDF`);
   if (order.files.some((f) => f.page_selection_active)) flags.push("page selection applied");
+  // Files the client swapped out after a revision request — the shop should
+  // re-inspect the new bytes before approving.
+  const revised = order.files.filter((f) => (f.current_version ?? 1) > 1);
+  if (revised.length) flags.push(`${revised.length} file(s) revised by client`);
   if (order.reprint_count > 0) flags.push(`reprinted ${order.reprint_count}×`);
   return flags;
 }

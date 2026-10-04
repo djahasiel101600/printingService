@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Copy, Eye, LogIn, QrCode, Wallet } from "lucide-react";
+import { CheckCircle2, Copy, Eye, FileUp, History, LogIn, QrCode, Wallet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,8 @@ export default function OrderDetailPage() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [qrResult, setQrResult] = useState<CheckoutResponse | null>(null);
   const [previewFile, setPreviewFile] = useState<OrderFile | null>(null);
+  const [reuploadFile, setReuploadFile] = useState<OrderFile | null>(null);
+  const reuploadInput = useRef<HTMLInputElement>(null);
 
   // Orders placed without an account are proven by their tracking ID, which
   // is stored on this device right after checkout (see NewOrderPage).
@@ -88,6 +90,50 @@ export default function OrderDetailPage() {
     onError: (err) => toast.error(apiErrorMessage(err)),
   });
 
+  // The shop asked for changes: replace one file with a corrected version.
+  // Guests post the tracking ID as the ownership proof (multipart body).
+  const reuploadMutation = useMutation({
+    mutationFn: async ({ file, upload }: { file: OrderFile; upload: File }) => {
+      const body = new FormData();
+      body.append("file", upload);
+      if (guestRef?.tracking_id) body.append("tracking_id", guestRef.tracking_id);
+      const { data } = await api.post<Order>(
+        `/orders/${id}/files/${file.id}/reupload/`, body);
+      return data;
+    },
+    // Read the target from the mutation variables (not state) so the toast
+    // always names the file that was actually replaced.
+    onSuccess: (data, variables) => {
+      const updated = data.files.find((f) => f.id === variables.file.id);
+      toast.success(updated
+        ? `Uploaded v${updated.current_version} of ${updated.file_name}.`
+        : "Revised file uploaded.");
+      setReuploadFile(null);
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+    },
+    onError: (err) => {
+      setReuploadFile(null);
+      toast.error(apiErrorMessage(err));
+    },
+  });
+
+  // Hand the order back to the shop: revision_requested -> pending_review.
+  // The server also requires at least one v2+ file, mirrored here for UX.
+  const resubmitMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<Order>(`/orders/${id}/resubmit/`,
+        guestRef?.tracking_id ? { tracking_id: guestRef.tracking_id } : {});
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Revised files sent back for review.");
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      queryClient.invalidateQueries({ queryKey: ["my-orders"] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
   // Close the payment dialog by itself once the order is no longer payable
   // (e.g. the webhook confirmed the payment while we were polling).
   const payable = order?.status === "draft" || order?.status === "awaiting_payment";
@@ -136,6 +182,10 @@ export default function OrderDetailPage() {
 
   const canPay = payable && order.balance_due_peso > 0;
   const allowPickup = settingsQuery.data?.allow_pay_on_pickup ?? false;
+  const needsRevision = order?.status === "revision_requested";
+  // At least one file already replaced (v2+) — mirrors the server rule so
+  // the customer cannot bounce an untouched order back into the queue.
+  const hasRevisedFiles = Boolean(order?.files.some((f) => (f.current_version ?? 1) > 1));
 
   function copyTrackingId() {
     navigator.clipboard.writeText(order!.tracking_id);
@@ -241,19 +291,61 @@ export default function OrderDetailPage() {
               <li key={f.id}
                 className="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2 text-sm">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{f.file_name}</p>
+                  <p className="truncate font-medium">
+                    {f.file_name}
+                    {(f.current_version ?? 1) > 1 && (
+                      <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700">
+                        v{f.current_version}
+                      </span>
+                    )}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {f.page_count} page{f.page_count === 1 ? "" : "s"} · {f.file_type}
                     {f.has_edits && " · edited"}
+                    {(f.versions?.length ?? 0) > 0 && (
+                      <> · {f.versions.length + 1} versions</>
+                    )}
                   </p>
+                  {(f.versions?.length ?? 0) > 0 && (
+                    <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <History className="h-3 w-3" />
+                      {[...f.versions].reverse().map((v) => v.version_label).join(" → ")}
+                      {" → "}v{f.current_version} (current)
+                    </p>
+                  )}
                 </div>
-                <Button variant="outline" size="sm"
-                  onClick={() => setPreviewFile(f)}>
-                  <Eye className="mr-2 h-4 w-4" /> Preview
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {needsRevision && (
+                    <Button variant="outline" size="sm"
+                      disabled={reuploadMutation.isPending}
+                      onClick={() => {
+                        setReuploadFile(f);
+                        // One tick later so the target file is already in state
+                        // when the picker resolves.
+                        setTimeout(() => reuploadInput.current?.click(), 0);
+                      }}>
+                      <FileUp className="mr-2 h-4 w-4" /> Replace
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm"
+                    onClick={() => setPreviewFile(f)}>
+                    <Eye className="mr-2 h-4 w-4" /> Preview
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
+          {/* One shared picker: the Replace button records which file it targets,
+              then opens this input. Accepts what the create endpoint accepts
+              (PREVIEWABLE_EXTENSIONS) so nothing offered here is rejected. */}
+          <input ref={reuploadInput} type="file" className="hidden"
+            accept=".pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.jpg,.jpeg,.png,.webp"
+            onChange={(e) => {
+              const picked = e.target.files?.[0];
+              e.target.value = "";
+              if (picked && reuploadFile) reuploadMutation.mutate({ file: reuploadFile, upload: picked });
+              else setReuploadFile(null);
+            }} />
         </CardContent>
       </Card>
 
@@ -261,7 +353,25 @@ export default function OrderDetailPage() {
       {order.revision_note && (
         <Card className="border-orange-200 bg-orange-50">
           <CardHeader><CardTitle className="text-orange-800">Revision requested</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-orange-700">{order.revision_note}</p></CardContent>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-orange-700">{order.revision_note}</p>
+            {needsRevision && (
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={() => resubmitMutation.mutate()}
+                  disabled={!hasRevisedFiles || resubmitMutation.isPending}
+                >
+                  {resubmitMutation.isPending ? "Resubmitting…" : "Submit revised files for review"}
+                </Button>
+                {!hasRevisedFiles && (
+                  <p className="text-xs text-orange-700">
+                    Replace at least one file above (each upload is kept as a new version),
+                    then send the order back for review.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
         </Card>
       )}
 

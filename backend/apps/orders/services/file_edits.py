@@ -198,60 +198,54 @@ def apply_edit(order_file, action: str, params: dict | None = None) -> None:
 def select_pages(order_file, pages: list[int] | None) -> list[int]:
     """Admin page selection ("which pages should be printed?").
 
-    Physically trims the PDF into ``final_file`` so the printer receives exactly
-    the chosen sheets — Epson Connect has no page-range parameter, so the work
-    has to happen before upload. Passing an empty selection (or ``None``) clears
-    it and prints the whole document again.
+    Epson Connect has no page-range parameter, so the selection is baked into
+    ``final_file`` (see services/print_prep.py) together with the fit onto the
+    paper's printable area. Office/text uploads are rendered into a printable
+    PDF on the way — that is what gives them real page numbers to select from.
 
+    Passing an empty selection (or ``None``) clears it and prints everything.
     Returns the normalised selection actually stored.
     """
-    from apps.orders.models import format_page_selection
+    # Imported inside the function on purpose: print_prep imports this module
+    # for the paper geometry, so a module-level import would be circular.
+    from .print_prep import rebuild_print_file, render_document
 
-    if order_file.file_type != "pdf":
+    if order_file.file_type == "image":
         # Images are a single sheet; nothing to select.
         order_file.page_selection = []
         order_file.save(update_fields=["page_selection"])
         return []
 
+    if order_file.file_type == "document" and not (order_file.edited_file or order_file.final_file):
+        # Render first: without a printable version there are no pages to
+        # choose from (and the file stays blocked for approval).
+        render_document(order_file)
+
     source = order_file.edited_file or order_file.file
     source.open("rb")
-    content = source.read()
-    source.close()
+    try:
+        content = source.read()
+    finally:
+        source.close()
 
     try:
         total = count_pages("pdf", content)
     except FileEditError:
         total = order_file.page_count
-    order_file.page_count = total
+    order_file.page_count = max(1, total)
 
-    wanted = sorted({int(p) for p in (pages or [])})
-    wanted = [p for p in wanted if 1 <= p <= total]
-    if not wanted or wanted == list(range(1, total + 1)):
-        # Nothing to trim — drop the prepared file so the original goes out.
-        order_file.page_selection = []
-        if order_file.final_file:
-            order_file.final_file.delete(save=False)
-            order_file.final_file = None
-        order_file.save(update_fields=["page_selection", "final_file"])
-        return []
-
-    trimmed = edit_pdf(content, "split", {"pages": wanted})
-    name = _final_name(order_file.file_name)
-    order_file.final_file.save(name, ContentFile(trimmed), save=False)
+    wanted = sorted({int(page) for page in (pages or [])})
+    wanted = [page for page in wanted if 1 <= page <= order_file.page_count]
+    if wanted == list(range(1, order_file.page_count + 1)):
+        # Selecting every page means "print it all" — stored as no selection.
+        wanted = []
     order_file.page_selection = wanted
-    actions = list(order_file.edit_actions or [])
-    actions.append({"action": "select_pages", "pages": format_page_selection(wanted)})
-    order_file.edit_actions = actions
-    order_file.save(update_fields=["final_file", "page_selection", "edit_actions"])
-    return wanted
+    order_file.save(update_fields=["page_selection", "page_count"])
+    rebuild_print_file(order_file)
+    return order_file.page_selection
 
 
 def _edited_name(original: str, extension: str) -> str:
     stem = original.rsplit(".", 1)[0][:180]
     return f"{stem}-edited.{extension}"
-
-
-def _final_name(original: str) -> str:
-    stem = original.rsplit(".", 1)[0][:180]
-    return f"{stem}-final.pdf"
 

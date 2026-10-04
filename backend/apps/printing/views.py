@@ -5,7 +5,7 @@ from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.pricing.views import IsShopAdmin
+from apps.pricing.views import IsShopAdmin, IsShopStaff
 
 from .epson import EpsonClient, EpsonError
 from .models import EpsonCredential
@@ -178,9 +178,13 @@ class EpsonTestConnectionView(APIView):
 
 
 class PrintJobViewSet(APIView):
-    """Admin: list print jobs and sync their status from Epson."""
+    """Admin: list print jobs and sync their status from Epson.
 
-    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+    Open to approvers too — they release the jobs, so they need to see what the
+    printer did with them.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsShopStaff]
 
     def get(self, request):
         from .models import PrintJob

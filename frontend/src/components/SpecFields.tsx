@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  orientationLabel,
   paperSizeLabel,
   paperSourceLabel,
   paperTypeLabel,
@@ -22,6 +23,8 @@ interface SpecFieldsProps {
   capabilities: Capabilities | null;
   value: PrintSpecification;
   onChange: (spec: PrintSpecification) => void;
+  /** Show the Portrait/Landscape control — it only affects picture files. */
+  showOrientation?: boolean;
 }
 
 export const DEFAULT_SPEC: PrintSpecification = {
@@ -32,13 +35,16 @@ export const DEFAULT_SPEC: PrintSpecification = {
   print_quality: "normal",
   copies: 1,
   borderless: false,
+  orientation: "portrait",
   source: "auto",
   reverse_order: false,
   collate: true,
   free_text_instructions: "",
 };
 
-export default function SpecFields({ capabilities, value, onChange }: SpecFieldsProps) {
+export default function SpecFields({
+  capabilities, value, onChange, showOrientation = true,
+}: SpecFieldsProps) {
   const [advanced, setAdvanced] = useState(false);
 
   function update<K extends keyof PrintSpecification>(key: K, val: PrintSpecification[K]) {
@@ -152,6 +158,30 @@ export default function SpecFields({ capabilities, value, onChange }: SpecFields
           onChange={(e) => update("copies", Math.min(99, Math.max(1, parseInt(e.target.value) || 1)))}
         />
       </div>
+
+      {showOrientation && (
+        <div className="space-y-1.5">
+          <Label>Orientation (pictures)</Label>
+          <RadioGroup
+            value={value.orientation}
+            onValueChange={(v) => update("orientation", v as "portrait" | "landscape")}
+            className="grid grid-cols-2 gap-2"
+          >
+            {(["portrait", "landscape"] as const).map((option) => (
+              <div key={option} className="flex items-center space-x-2 rounded-md border p-2.5">
+                <RadioGroupItem value={option} id={`orientation-${option}`} />
+                <Label htmlFor={`orientation-${option}`} className="cursor-pointer font-normal">
+                  {orientationLabel(option)}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+          <p className="text-xs text-muted-foreground">
+            How the picture sits on the sheet — landscape turns it so it uses the full
+            page. PDFs and documents keep their own layout.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between rounded-md border p-3">
         <div>

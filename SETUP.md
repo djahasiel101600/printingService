@@ -147,6 +147,7 @@ npm run dev
 - Django Admin: http://127.0.0.1:8000/admin
 - Quick-print wizard (what the counter QR code opens): http://localhost:5173/q
 - Admin pricing page: http://localhost:5173/admin/pricing
+- Staff accounts (add an approver who can approve orders): http://localhost:5173/admin/users
 
 ---
 

@@ -125,7 +125,10 @@ export default function TrackOrderPage() {
               <p className="text-sm font-medium">Files</p>
               <ul className="mt-1 space-y-1 text-sm text-muted-foreground">
                 {result.files.map((f) => (
-                  <li key={f.id}>{f.file_name} — {f.page_count} page(s)</li>
+                  <li key={f.id}>
+                    {f.file_name} — {f.page_count} page(s)
+                    {(f.current_version ?? 1) > 1 && ` · v${f.current_version}`}
+                  </li>
                 ))}
               </ul>
             </div>

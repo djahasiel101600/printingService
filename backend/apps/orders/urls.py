@@ -14,8 +14,10 @@ from .views import (
     OrderEstimateView,
     OrderFileEditView,
     OrderFilePreviewView,
+    OrderFileReuploadView,
     OrderFileTextPreviewView,
     OrderListView,
+    OrderResubmitView,
     QuoteView,
     TrackOrderView,
 )
@@ -30,6 +32,9 @@ urlpatterns = [
     path("orders/<int:order_pk>/files/<int:file_pk>/preview/", OrderFilePreviewView.as_view(), name="order-file-preview"),
     path("orders/<int:order_pk>/files/<int:file_pk>/contents/",
          OrderFileTextPreviewView.as_view(), name="order-file-contents"),
+    path("orders/<int:order_pk>/files/<int:file_pk>/reupload/",
+         OrderFileReuploadView.as_view(), name="order-file-reupload"),
+    path("orders/<int:pk>/resubmit/", OrderResubmitView.as_view(), name="order-resubmit"),
     path("track/<str:tracking_id>/", TrackOrderView.as_view(), name="order-track"),
     # admin
     path("admin/orders/", AdminOrderListView.as_view(), name="admin-order-list"),

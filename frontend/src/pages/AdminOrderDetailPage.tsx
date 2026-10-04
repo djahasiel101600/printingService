@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useAuth } from "@/components/auth";
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import FileReviewCard from "@/components/FileReviewCard";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,6 +60,7 @@ function availableActions(status: Order["status"]): AdminAction[] {
 
 export default function AdminOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [note, setNote] = useState("");
   const [confirmAction, setConfirmAction] = useState<AdminAction | null>(null);
@@ -105,6 +107,11 @@ export default function AdminOrderDetailPage() {
   if (isLoading || !order) return <Skeleton className="h-96 w-full" />;
 
 const actions = availableActions(order.status);
+  // Approvers work the print queue, but cancelling an order (which refunds)
+  // and recording cash are owner-only — mirrors the API's guard.
+  const visibleActions = user?.is_shop_admin
+    ? actions
+    : actions.filter((action) => action !== "cancel" && action !== "record_payment");
   const printerCancelled = order.status === "print_cancelled";
   const unprintable = order.files.filter((f) => !f.print_ready);
   const jobs = order.print_jobs ?? [];
@@ -264,7 +271,7 @@ const actions = availableActions(order.status);
               placeholder="Internal note, or the message sent with a revision request" />
           </div>
           <div className="flex flex-wrap gap-2">
-            {actions.map((action) => (
+            {visibleActions.map((action) => (
               <Button key={action} size="sm"
                 variant={DESTRUCTIVE.includes(action) ? "destructive"
                   : action === "reprint" ? "secondary" : "default"}
@@ -276,7 +283,7 @@ const actions = availableActions(order.status);
                 {ACTION_LABELS[action]}
               </Button>
             ))}
-            {showRecordPayment && !actions.includes("record_payment") && (
+            {showRecordPayment && user?.is_shop_admin && !actions.includes("record_payment") && (
               <Button size="sm" variant="outline"
                 onClick={() => setConfirmAction("record_payment")}>
                 <Wallet className="mr-2 h-4 w-4" /> Record Payment

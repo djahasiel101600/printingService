@@ -57,6 +57,8 @@ export default function QuickPrintPage() {
 
   const [step, setStep] = useState(1);
   const [files, setFiles] = useState<File[]>([]);
+  /** Orientation only affects picture files, so the control follows the uploads. */
+  const hasImages = files.some((file) => /\.(jpe?g|png|webp)$/i.test(file.name));
   const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
   const [spec, setSpec] = useState<PrintSpecification>(DEFAULT_SPEC);
   const [guestName, setGuestName] = useState("");
@@ -723,7 +725,8 @@ export default function QuickPrintPage() {
                     {capabilitiesQuery.isLoading ? (
                       <Skeleton className="h-40 w-full" />
                     ) : (
-                      <SpecFields capabilities={capabilities} value={spec} onChange={setSpec} />
+                      <SpecFields capabilities={capabilities} value={spec} onChange={setSpec}
+                        showOrientation={hasImages} />
                     )}
                   </div>
                 )}

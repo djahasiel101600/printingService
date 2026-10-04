@@ -7,10 +7,25 @@ from .serializers import PriceRuleSerializer
 
 
 class IsShopAdmin(permissions.BasePermission):
-    """Allows access only to shop admin/staff users."""
+    """Owner-level access: shop admin/superuser only.
+
+    This guards configuration (pricing, printer credentials, staff accounts),
+    not the order review queue — that is ``IsShopStaff``.
+    """
 
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_shop_admin)
+
+
+class IsShopStaff(permissions.BasePermission):
+    """Order-review access: shop admins *and* approvers.
+
+    Added with the approver role so a second person can approve submitted print
+    orders without being able to change prices, credentials or staff.
+    """
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.can_review_orders)
 
 
 class PriceRuleViewSet(viewsets.ModelViewSet):

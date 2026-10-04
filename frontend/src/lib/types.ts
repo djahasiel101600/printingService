@@ -25,10 +25,25 @@ export interface PrintSpecification {
   print_quality: "draft" | "normal" | "high";
   copies: number;
   borderless: boolean;
+  /** Portrait | Landscape — applies to picture files (the shop rotates them). */
+  orientation: "portrait" | "landscape";
   source: string;
   reverse_order: boolean;
   collate: boolean;
   free_text_instructions?: string;
+}
+
+export interface OrderFileVersion {
+  id: number;
+  version_number: number;
+  version_label: string;
+  file_name: string;
+  file_type: "pdf" | "image" | "document";
+  content_type: string;
+  size: number;
+  page_count: number;
+  file: string;
+  created_at: string;
 }
 
 export interface OrderFile {
@@ -47,14 +62,22 @@ export interface OrderFile {
   has_final_file: boolean;
   /** True when the shop swapped this upload for a print-ready version. */
   replaced_by_admin: boolean;
+  /** True when the shop rendered this document into a printable PDF. */
+  rendered_by_admin: boolean;
+  /** Customer re-upload counter — 1 = the original upload. */
+  current_version: number;
+  /** Older uploads, kept when the customer revises a file. */
+  versions: OrderFileVersion[];
   /** Pages the admin chose to print; empty means "the whole document". */
   page_selection: number[];
   selected_pages: number[];
   selected_page_count: number;
   page_selection_label: string;
   page_selection_active: boolean;
-  /** False for documents the shop must convert to PDF before printing. */
+  /** False for documents the shop must render or convert before printing. */
   print_ready: boolean;
+  /** e.g. "595×841 mm sheet, 566×813 mm printable area (5 mm margins)". */
+  print_area: string;
   specification?: PrintSpecification;
   uploaded_at: string;
 }
@@ -171,8 +194,41 @@ export interface CurrentUser {
   first_name: string;
   last_name: string;
   phone: string;
-  role: "client" | "admin";
+  role: "client" | "approver" | "admin";
   is_shop_admin: boolean;
+  /** True for the approver role: may work the review queue, not config. */
+  is_approver: boolean;
+  /** Admins *and* approvers — everyone who may review/print orders. */
+  can_review_orders: boolean;
+}
+
+/** One shop-side account as the owner sees it in user management. */
+export interface StaffUser {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  role: "approver" | "admin";
+  role_display: string;
+  is_active: boolean;
+  is_staff: boolean;
+  is_superuser: boolean;
+  is_approver: boolean;
+  is_shop_admin: boolean;
+  date_joined: string;
+  last_login: string | null;
+}
+
+/** Payload for POST /admin/users/ and PATCH /admin/users/<id>/. */
+export interface StaffUserPayload {
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  role: "approver" | "admin";
+  password?: string;
+  is_active?: boolean;
 }
 
 export interface SetupStatus {
@@ -232,7 +288,9 @@ export interface TrackResult {
   amount_paid_peso: number;
   balance_due_peso: number;
   reprint_count: number;
-  files: { id: number; file_name: string; page_count: number; file_type: string }[];
+  files: { id: number; file_name: string; page_count: number; file_type: string;
+           /** 1 = the original upload; >1 means the client replaced it. */
+           current_version?: number }[];
   history: { to_status: OrderStatus; to_status_display: string; note: string; created_at: string }[];
   created_at: string;
   updated_at: string;

@@ -188,6 +188,15 @@ PREVIEWABLE_EXTENSIONS = (
 )
 PRINTABLE_EXTENSIONS = ("pdf", "jpg", "jpeg", "png")
 IMAGE_EXTENSIONS = ("jpg", "jpeg", "png", "webp")
+# Sheet orientation for the printed page. Epson Connect v2 has no orientation
+# parameter, so the shop applies it to the file itself before upload. Picture
+# files are rotated to fill the sheet; PDFs and Word documents already carry
+# their own page layout and ignore this value (see services/print_prep.py).
+ORIENTATIONS = (
+    ("portrait", "Portrait"),
+    ("landscape", "Landscape"),
+)
+
 # Legacy binary Office formats cannot be parsed with the standard library and
 # are rejected at upload time with a pointer to the modern equivalents.
 LEGACY_EXTENSIONS = ("doc", "xls", "ppt")
@@ -227,6 +236,14 @@ class OrderFile(models.Model):
     # Set when the shop replaces an un-printable upload (e.g. a .docx) with a
     # converted PDF, so the UI can explain why the file changed.
     replaced_by_admin = models.BooleanField(default=False)
+    # Set when the shop rendered an Office/text upload into a printable PDF
+    # itself (services/document_render.py) instead of converting it by hand.
+    rendered_by_admin = models.BooleanField(default=False)
+    # Customer re-upload counter: bumped each time the client replaces this
+    # file after a revision request. Starts at 1 (the original upload);
+    # superseded bytes live on OrderFileVersion rows.
+    current_version = models.PositiveIntegerField(default=1)
+
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -241,8 +258,16 @@ class OrderFile(models.Model):
 
     @property
     def print_ready(self) -> bool:
-        """True when this file can be sent to Epson as-is (PDF or image)."""
-        return self.file_type in {self.FileType.PDF, self.FileType.IMAGE}
+        """True when this file can be sent to Epson as-is.
+
+        PDFs and images always qualify. An Office/text upload qualifies as
+        soon as the shop has produced a print-ready version of it — either a
+        converted upload the admin pasted in, or one rendered here
+        (``edited_file``/``final_file``).
+        """
+        if self.file_type in {self.FileType.PDF, self.FileType.IMAGE}:
+            return True
+        return bool(self.edited_file or self.final_file)
 
     @property
     def selected_pages(self) -> list[int]:
@@ -285,10 +310,60 @@ class OrderFile(models.Model):
 
     @property
     def print_content_type(self) -> str:
-        """Content type for ``print_file`` — an image edit lands as JPEG."""
+        """Content type for ``print_file``.
+
+        Anything the shop prepared is a PDF (page selection, a rendered
+        document, a converted upload); a customer image edit lands as JPEG.
+        """
         if self.final_file or self.edited_file:
-            return "application/pdf" if self.file_type == self.FileType.PDF else "image/jpeg"
+            # Rendered documents and trimmed PDFs are always PDFs.
+            pdf = {self.FileType.PDF, self.FileType.DOCUMENT}
+            return "application/pdf" if self.file_type in pdf else "image/jpeg"
         return self.content_type or "application/octet-stream"
+
+
+def order_file_version_upload_to(instance, filename: str) -> str:
+    """Archive path for a superseded upload: unique per order file + version."""
+    safe = (filename or "file").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return f"orders/{instance.order_file.order.tracking_id}/versions/{instance.order_file_id}_v{instance.version_number}_{safe}"
+
+
+class OrderFileVersion(models.Model):
+    """Immutable snapshot of an OrderFile before a customer re-upload.
+
+    Created by the customer re-upload endpoint: the previous ``file`` (plus
+    the metadata the quote depends on) is copied here, then the live
+    OrderFile row is replaced. Edits (``edited_file``) and shop-prepared
+    output (``final_file``) both derive from the old bytes, so the snapshot
+    only keeps the original upload — derived artefacts are discarded with
+    the old version.
+    """
+
+    order_file = models.ForeignKey(OrderFile, on_delete=models.CASCADE, related_name="versions")
+    version_number = models.PositiveIntegerField()
+    file = models.FileField(upload_to=order_file_version_upload_to)
+    file_name = models.CharField(max_length=255)
+    file_type = models.CharField(max_length=16, choices=OrderFile.FileType.choices)
+    content_type = models.CharField(max_length=128, blank=True)
+    size = models.PositiveIntegerField(default=0)
+    page_count = models.PositiveIntegerField(default=0)
+    edit_actions = models.JSONField(default=list)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="file_version_uploads",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["version_number"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["order_file", "version_number"], name="unique_file_version_number",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"v{self.version_number} of {self.file_name}"
 
 
 def format_page_selection(pages: list[int]) -> str:
@@ -323,6 +398,10 @@ class PrintSpecification(models.Model):
     print_quality = models.CharField(max_length=16, default="normal")     # draft | normal | high
     copies = models.PositiveSmallIntegerField(default=1)
     borderless = models.BooleanField(default=False)
+    # Portrait | Landscape. Applies to picture files only: the shop rotates the
+    # picture so it fills the sheet in that orientation (Epson Connect has no
+    # orientation setting, so it must be baked into the uploaded file).
+    orientation = models.CharField(max_length=10, choices=ORIENTATIONS, default="portrait")
     source = models.CharField(max_length=16, default="auto")              # Epson paperSource
     # Advanced options (hidden behind the Advanced toggle in the UI)
     reverse_order = models.BooleanField(default=False)

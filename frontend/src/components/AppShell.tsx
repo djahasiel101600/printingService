@@ -1,4 +1,4 @@
-import { Dumbbell, FileText, Settings, Tags } from "lucide-react";
+import { Dumbbell, FileText, Settings, Tags, Users } from "lucide-react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "@/components/auth";
@@ -62,7 +62,7 @@ export default function AppShell() {
                 API Settings
               </NavLink>
             )}
-            {user?.is_shop_admin && (
+            {user?.can_review_orders && (
               <NavLink
                 to="/admin"
                 className={({ isActive }) =>
@@ -71,6 +71,17 @@ export default function AppShell() {
               >
                 <Dumbbell className="mr-1 inline h-3.5 w-3.5" />
                 Admin
+              </NavLink>
+            )}
+            {user?.is_shop_admin && (
+              <NavLink
+                to="/admin/users"
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-1.5 ${isActive ? "bg-accent font-medium" : "text-muted-foreground hover:text-foreground"}`
+                }
+              >
+                <Users className="mr-1 inline h-3.5 w-3.5" />
+                Staff
               </NavLink>
             )}
           </nav>
@@ -82,6 +93,11 @@ export default function AppShell() {
                   {user.is_shop_admin && (
                     <span className="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">
                       staff
+                    </span>
+                  )}
+                  {user.is_approver && !user.is_shop_admin && (
+                    <span className="ml-1 rounded bg-indigo-100 px-1.5 py-0.5 text-xs font-semibold text-indigo-700">
+                      approver
                     </span>
                   )}
                 </span>
