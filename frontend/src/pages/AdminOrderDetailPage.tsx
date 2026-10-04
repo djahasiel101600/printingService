@@ -1,14 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowLeft, Copy, Printer, Save, Wallet,
+  AlertTriangle,
+  ArrowLeft,
+  Copy,
+  Loader2,
+  Printer,
+  Save,
+  Wallet,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,8 +36,16 @@ import { cn } from "@/lib/utils";
 import type { Order, OrderFile, PrintJob } from "@/lib/types";
 
 type AdminAction =
-  | "approve" | "reject" | "request_revision" | "hold" | "resolve_hold"
-  | "ready" | "complete" | "cancel" | "record_payment" | "reprint";
+  | "approve"
+  | "reject"
+  | "request_revision"
+  | "hold"
+  | "resolve_hold"
+  | "ready"
+  | "complete"
+  | "cancel"
+  | "record_payment"
+  | "reprint";
 
 const ACTION_LABELS: Record<AdminAction, string> = {
   approve: "Approve & Queue",
@@ -44,19 +65,44 @@ const DESTRUCTIVE: AdminAction[] = ["reject", "cancel"];
 /** Actions the shop can take from each status (mirrors the API's ALLOWED map). */
 function availableActions(status: Order["status"]): AdminAction[] {
   switch (status) {
-    case "draft": return ["cancel"];
-    case "awaiting_payment": return ["reject", "cancel"];
-    case "pending_review": return ["approve", "reject", "request_revision"];
-    case "approved_queued": return ["hold", "reprint", "cancel"];
-    case "on_hold": return ["resolve_hold", "reprint", "cancel"];
-    case "printing": return ["hold", "ready"];
-    case "printed_ready": return ["complete", "reprint"];
-    case "print_cancelled": return ["reprint", "ready", "reject"];
-    case "revision_requested": return ["cancel"];
-    case "completed": return ["reprint"];
-    default: return [];
+    case "draft":
+      return ["cancel"];
+    case "awaiting_payment":
+      return ["reject", "cancel"];
+    case "pending_review":
+      return ["approve", "reject", "request_revision"];
+    case "approved_queued":
+      return ["hold", "reprint", "cancel"];
+    case "on_hold":
+      return ["resolve_hold", "reprint", "cancel"];
+    case "printing":
+      return ["hold", "ready"];
+    case "printed_ready":
+      return ["complete", "reprint"];
+    case "print_cancelled":
+      return ["reprint", "ready", "reject"];
+    case "revision_requested":
+      return ["cancel"];
+    case "completed":
+      return ["reprint"];
+    default:
+      return [];
   }
 }
+
+const peso = (n: number) =>
+  `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatDate = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+const humanize = (s?: string | null) => (s ? s.replace(/_/g, " ") : "—");
 
 export default function AdminOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -66,9 +112,16 @@ export default function AdminOrderDetailPage() {
   const [confirmAction, setConfirmAction] = useState<AdminAction | null>(null);
   const [previewFile, setPreviewFile] = useState<OrderFile | null>(null);
   const [notes, setNotes] = useState("");
-  const [reprintTarget, setReprintTarget] = useState<OrderFile | "all" | null>(null);
+  const [reprintTarget, setReprintTarget] = useState<OrderFile | "all" | null>(
+    null,
+  );
 
-  const { data: order, isLoading } = useQuery({
+  const {
+    data: order,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["admin-order", id],
     queryFn: async () => (await api.get<Order>(`/admin/orders/${id}/`)).data,
   });
@@ -78,13 +131,22 @@ export default function AdminOrderDetailPage() {
   }, [order?.id, order?.admin_notes]);
 
   const actionMutation = useMutation({
-    mutationFn: async (payload: { action: AdminAction; extra?: Record<string, unknown> }) =>
-      (await api.post<Order>(`/admin/orders/${id}/actions/${payload.action}/`,
-        { note, ...(payload.extra ?? {}) })).data,
+    mutationFn: async (payload: {
+      action: AdminAction;
+      extra?: Record<string, unknown>;
+    }) =>
+      (
+        await api.post<Order>(
+          `/admin/orders/${id}/actions/${payload.action}/`,
+          { note, ...(payload.extra ?? {}) },
+        )
+      ).data,
     onSuccess: (data, variables) => {
-      toast.success(variables.action === "reprint"
-        ? `Reprint #${data.reprint_count} sent to the printer.`
-        : "Order updated.");
+      toast.success(
+        variables.action === "reprint"
+          ? `Reprint #${data.reprint_count} sent to the printer.`
+          : "Order updated.",
+      );
       setNote("");
       setConfirmAction(null);
       setReprintTarget(null);
@@ -96,7 +158,11 @@ export default function AdminOrderDetailPage() {
 
   const notesMutation = useMutation({
     mutationFn: async () =>
-      (await api.patch<Order>(`/admin/orders/${id}/notes/`, { admin_notes: notes })).data,
+      (
+        await api.patch<Order>(`/admin/orders/${id}/notes/`, {
+          admin_notes: notes,
+        })
+      ).data,
     onSuccess: (data) => {
       toast.success("Internal notes saved.");
       queryClient.setQueryData(["admin-order", id], data);
@@ -104,306 +170,600 @@ export default function AdminOrderDetailPage() {
     onError: (err) => toast.error(apiErrorMessage(err)),
   });
 
-  if (isLoading || !order) return <Skeleton className="h-96 w-full" />;
+  if (isLoading) return <DetailSkeleton />;
 
-const actions = availableActions(order.status);
+  if (isError || !order) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-14 text-center">
+          <AlertTriangle aria-hidden className="h-8 w-8 text-destructive" />
+          <div className="space-y-1">
+            <p className="font-medium">Couldn't load this order</p>
+            <p className="text-sm text-muted-foreground">
+              It may have been removed, or the connection dropped.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Try again
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/admin">Back to orders</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const actions = availableActions(order.status);
   // Approvers work the print queue, but cancelling an order (which refunds)
   // and recording cash are owner-only — mirrors the API's guard.
   const visibleActions = user?.is_shop_admin
     ? actions
-    : actions.filter((action) => action !== "cancel" && action !== "record_payment");
+    : actions.filter(
+        (action) => action !== "cancel" && action !== "record_payment",
+      );
   const printerCancelled = order.status === "print_cancelled";
   const unprintable = order.files.filter((f) => !f.print_ready);
   const jobs = order.print_jobs ?? [];
   const printerCancelledJobs = jobs.filter((j) => j.is_printer_cancelled);
   const showRecordPayment =
-    order.balance_due_peso > 0 && !["rejected", "cancelled"].includes(order.status);
+    order.balance_due_peso > 0 &&
+    !["rejected", "cancelled"].includes(order.status);
   // Page selection stops being meaningful once the sheets are on the printer.
-  const pagesLocked = ["printing", "printed_ready", "completed"].includes(order.status);
+  const pagesLocked = ["printing", "printed_ready", "completed"].includes(
+    order.status,
+  );
+
+  // Group actions: safe ones first, destructive ones separated at the bottom.
+  const mainActions: AdminAction[] = visibleActions.filter(
+    (a) => !DESTRUCTIVE.includes(a),
+  );
+  if (
+    showRecordPayment &&
+    user?.is_shop_admin &&
+    !actions.includes("record_payment")
+  ) {
+    mainActions.push("record_payment");
+  }
+  const destructiveActions = visibleActions.filter((a) =>
+    DESTRUCTIVE.includes(a),
+  );
+  const primaryAction =
+    mainActions.find((a) => a !== "reprint" && a !== "record_payment") ??
+    mainActions[0];
+
+  const reprintFile =
+    reprintTarget && reprintTarget !== "all" ? reprintTarget : null;
+  const notesDirty = notes !== (order.admin_notes ?? "");
+
+  const runAction = (action: AdminAction) =>
+    action === "reprint" ? setReprintTarget("all") : setConfirmAction(action);
 
   return (
     <div className="space-y-6">
-      <div>
-        <Button asChild variant="ghost" size="sm" className="-ml-2 mb-1">
-          <Link to="/admin"><ArrowLeft className="mr-2 h-4 w-4" /> All orders</Link>
+      {/* ------------------------------------------------------ header */}
+      <div className="space-y-2">
+        <Button asChild variant="ghost" size="sm" className="-ml-2">
+          <Link to="/admin">
+            <ArrowLeft aria-hidden className="mr-2 h-4 w-4" /> All orders
+          </Link>
         </Button>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">{order.tracking_id}</h1>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h1 className="text-2xl font-bold tracking-tight">
+            {order.tracking_id}
+          </h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground"
+            aria-label="Copy tracking ID"
+            onClick={() => {
+              navigator.clipboard
+                ?.writeText(order.tracking_id)
+                .then(() => toast.success("Tracking ID copied."))
+                .catch(() => toast.error("Couldn't copy the tracking ID."));
+            }}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
           <StatusBadge status={order.status} display={order.status_display} />
           {order.reprint_count > 0 && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <Copy className="h-3 w-3" /> reprinted {order.reprint_count}×
+              <Printer aria-hidden className="h-3 w-3" /> Reprinted{" "}
+              {order.reprint_count}×
             </span>
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          {order.client_name} · {new Date(order.created_at).toLocaleString()}
+          <span className="font-medium text-foreground">
+            {order.client_name}
+          </span>
+          {" · "}Placed{" "}
+          <time dateTime={order.created_at}>
+            {formatDate(order.created_at)}
+          </time>
         </p>
       </div>
 
+      {/* ------------------------------------------------------ alerts */}
       {printerCancelled && (
-        <div className="flex items-start gap-3 rounded-md border-2 border-amber-400 bg-amber-50 p-4">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-          <div className="space-y-1 text-sm text-amber-900">
-            <p className="font-medium">The printer cancelled this job — nothing was printed.</p>
-            {printerCancelledJobs.map((job) => (
-              <p key={job.id} className="text-xs">
-                {job.file_name}: {job.error_message || "cancelled at the printer"}
-              </p>
-            ))}
-            <p className="text-xs">
-              Use <strong>Reprint</strong> to send it again — the customer keeps their
-              place in the queue either way.
+        <AlertBanner title="The printer cancelled this job — nothing was printed.">
+          {printerCancelledJobs.map((job) => (
+            <p key={job.id}>
+              <span className="font-medium">{job.file_name}:</span>{" "}
+              {job.error_message || "cancelled at the printer"}
             </p>
-          </div>
-        </div>
+          ))}
+          <p>
+            Use <strong>Reprint</strong> to send it again. The customer keeps
+            their place in the queue either way.
+          </p>
+        </AlertBanner>
       )}
 
       {unprintable.length > 0 && (
-        <div className="flex items-start gap-3 rounded-md border-2 border-amber-400 bg-amber-50 p-4">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-          <div className="space-y-1 text-sm text-amber-900">
-            <p className="font-medium">
-              {unprintable.length} file(s) cannot be sent to the printer
-            </p>
-            <p className="text-xs">
-              {unprintable.map((f) => f.file_name).join(", ")} — preview them below to check
-              the content, then upload the converted PDF. Approval is blocked until then.
-            </p>
-          </div>
-        </div>
+        <AlertBanner
+          title={`${unprintable.length} file(s) cannot be sent to the printer`}
+        >
+          <p>
+            {unprintable.map((f) => f.file_name).join(", ")}. Preview them below
+            to check the content, then upload the converted PDF. Approval is
+            blocked until then.
+          </p>
+        </AlertBanner>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
-        {/* ------------------------------------------------ review column */}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        {/* ---------------------------------------------- review column */}
         <div className="space-y-6">
           <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-sm">Files to review ({order.files.length})</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Preview each file, then choose the pages to print
+            <CardHeader className="space-y-1">
+              <CardTitle className="text-base">
+                Files to review ({order.files.length})
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Preview each file, then choose the pages to print.
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
               {order.files.map((file) => (
-                <FileReviewCard key={file.id} order={order} file={file}
-                  onPreview={setPreviewFile} locked={pagesLocked} />
+                <FileReviewCard
+                  key={file.id}
+                  order={order}
+                  file={file}
+                  onPreview={setPreviewFile}
+                  locked={pagesLocked}
+                />
               ))}
             </CardContent>
           </Card>
 
-{jobs.length > 0 && (
+          {jobs.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-sm">Printer jobs</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">Printer jobs</CardTitle>
+              </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
                   {jobs.map((job) => (
-                    <PrintJobRow key={job.id} job={job}
-                      onReprint={() => setReprintTarget(
-                        order.files.find((f) => f.id === job.order_file) ?? "all")} />
+                    <PrintJobRow
+                      key={job.id}
+                      job={job}
+                      onReprint={() =>
+                        setReprintTarget(
+                          order.files.find((f) => f.id === job.order_file) ??
+                            "all",
+                        )
+                      }
+                    />
                   ))}
                 </ul>
               </CardContent>
             </Card>
           )}
-
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Status history</CardTitle></CardHeader>
-            <CardContent>
-              <ul className="space-y-2">
-                {order.history.map((h) => (
-                  <li key={h.id} className="flex items-start gap-2 text-sm">
-                    <StatusBadge status={h.to_status} display={h.to_status_display}
-                      className="mt-0.5" />
-                    <div>
-                      <p>{h.note || "—"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(h.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
         </div>
 
-        {/* ------------------------------------------------- side column */}
-        <div className="space-y-6">
+        {/* ------------------------------------------------- side column
+            Actions come first so the decision is next to the review, and on
+            mobile they appear right after the files instead of at the very end. */}
+        <div className="space-y-6 lg:sticky lg:top-4">
           <Card>
-            <CardHeader><CardTitle className="text-sm">Order summary</CardTitle></CardHeader>
-            <CardContent className="space-y-1.5 text-sm">
-              <Row label="Subtotal" value={`₱${order.subtotal_peso.toFixed(2)}`} />
-              <Row label="Paid" value={`₱${order.amount_paid_peso.toFixed(2)}`} />
-              <Row label="Balance" value={`₱${order.balance_due_peso.toFixed(2)}`}
-                emphasis={order.balance_due_peso > 0} />
+            <CardHeader>
+              <CardTitle className="text-base">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="note">Note (optional)</Label>
+                <Textarea
+                  id="note"
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Internal note, or the message sent with a revision request"
+                />
+              </div>
+
+              {mainActions.length === 0 && destructiveActions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No actions are available while the order is{" "}
+                  {order.status_display.toLowerCase()}.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {mainActions.map((action) => (
+                    <Button
+                      key={action}
+                      className="w-full justify-start"
+                      variant={
+                        action === primaryAction
+                          ? "default"
+                          : action === "reprint"
+                            ? "secondary"
+                            : "outline"
+                      }
+                      onClick={() => runAction(action)}
+                    >
+                      {action === "reprint" && (
+                        <Printer aria-hidden className="mr-2 h-4 w-4" />
+                      )}
+                      {action === "record_payment" && (
+                        <Wallet aria-hidden className="mr-2 h-4 w-4" />
+                      )}
+                      {ACTION_LABELS[action]}
+                    </Button>
+                  ))}
+                  {destructiveActions.length > 0 && mainActions.length > 0 && (
+                    <Separator className="my-3" />
+                  )}
+                  {destructiveActions.map((action) => (
+                    <Button
+                      key={action}
+                      variant="outline"
+                      className="w-full justify-start border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => runAction(action)}
+                    >
+                      {ACTION_LABELS[action]}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Order summary</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Row label="Subtotal" value={peso(order.subtotal_peso)} />
+              <Row label="Paid" value={peso(order.amount_paid_peso)} />
+              <Row
+                label="Balance due"
+                value={peso(order.balance_due_peso)}
+                emphasis={order.balance_due_peso > 0}
+              />
               <Separator className="my-2" />
               <Row label="Contact" value={order.guest_contact_value || "—"} />
-              <Row label="Method" value={order.guest_contact_method || "—"} />
-              <Row label="Payment" value={order.payment_method || "—"} />
+              <Row
+                label="Contact method"
+                value={humanize(order.guest_contact_method)}
+                capitalize
+              />
+              <Row
+                label="Payment"
+                value={humanize(order.payment_method)}
+                capitalize
+              />
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-sm">Internal notes</CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => notesMutation.mutate()}
-                disabled={notesMutation.isPending || notes === (order.admin_notes ?? "")}>
-                <Save className="mr-2 h-4 w-4" /> Save
+              <div>
+                <CardTitle className="text-base">Internal notes</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Only the shop sees this.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => notesMutation.mutate()}
+                disabled={notesMutation.isPending || !notesDirty}
+              >
+                {notesMutation.isPending ? (
+                  <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Save aria-hidden className="mr-2 h-4 w-4" />
+                )}
+                {notesMutation.isPending ? "Saving…" : "Save"}
               </Button>
             </CardHeader>
+            <CardContent className="space-y-1.5">
+              <Textarea
+                rows={4}
+                aria-label="Internal notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Add a note for the team…"
+              />
+              {notesDirty && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Unsaved changes
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Status history</CardTitle>
+            </CardHeader>
             <CardContent>
-              <Textarea rows={4} value={notes} onChange={(e) => setNotes(e.target.value)}
-                placeholder="Only the shop sees this." />
+              <ol className="relative space-y-5 border-l pl-5">
+                {order.history.map((h) => (
+                  <li key={h.id} className="relative">
+                    <span
+                      aria-hidden
+                      className="absolute -left-[25px] top-1.5 h-2 w-2 rounded-full bg-border ring-4 ring-card"
+                    />
+                    <StatusBadge
+                      status={h.to_status}
+                      display={h.to_status_display}
+                    />
+                    <p
+                      className={cn(
+                        "mt-1.5 text-sm",
+                        !h.note && "italic text-muted-foreground",
+                      )}
+                    >
+                      {h.note || "No note"}
+                    </p>
+                    <time
+                      dateTime={h.created_at}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {formatDate(h.created_at)}
+                    </time>
+                  </li>
+                ))}
+              </ol>
             </CardContent>
           </Card>
         </div>
       </div>
 
-      {/* ------------------------------------------------------- actions */}
-      <Card>
-        <CardHeader><CardTitle className="text-sm">Actions</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="note">Note (optional)</Label>
-            <Textarea id="note" rows={2} value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Internal note, or the message sent with a revision request" />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {visibleActions.map((action) => (
-              <Button key={action} size="sm"
-                variant={DESTRUCTIVE.includes(action) ? "destructive"
-                  : action === "reprint" ? "secondary" : "default"}
-                onClick={() => (action === "reprint"
-                  ? setReprintTarget("all")
-                  : setConfirmAction(action))}>
-                {action === "reprint" && <Printer className="mr-2 h-4 w-4" />}
-                {action === "record_payment" && <Wallet className="mr-2 h-4 w-4" />}
-                {ACTION_LABELS[action]}
-              </Button>
-            ))}
-            {showRecordPayment && user?.is_shop_admin && !actions.includes("record_payment") && (
-              <Button size="sm" variant="outline"
-                onClick={() => setConfirmAction("record_payment")}>
-                <Wallet className="mr-2 h-4 w-4" /> Record Payment
-              </Button>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      <FilePreviewDialog
+        file={previewFile}
+        orderId={order.id}
+        allowVariants
+        onClose={() => setPreviewFile(null)}
+      />
 
-      <FilePreviewDialog file={previewFile} orderId={order.id} allowVariants
-        onClose={() => setPreviewFile(null)} />
-
-<Dialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
+      {/* ------------------------------------------------ confirm dialog */}
+      <Dialog
+        open={!!confirmAction}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Confirm: {confirmAction && ACTION_LABELS[confirmAction]}
+              {confirmAction && ACTION_LABELS[confirmAction]}?
             </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+            <DialogDescription>
+              Order {order.tracking_id} ·{" "}
               {confirmAction === "approve"
                 ? "This releases the job to the printer."
                 : "This will change the order status."}
-              {note && <span className="mt-1 block">Note: {note}</span>}
-            </p>
-            <Separator />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirmAction(null)}>Cancel</Button>
-              <Button
-                variant={confirmAction && DESTRUCTIVE.includes(confirmAction) ? "destructive" : "default"}
-                onClick={() => confirmAction &&
-                  actionMutation.mutate({ action: confirmAction })}
-                disabled={actionMutation.isPending}>
-                Confirm
-              </Button>
-            </div>
-          </div>
+              {confirmAction &&
+                DESTRUCTIVE.includes(confirmAction) &&
+                " This can't be undone."}
+            </DialogDescription>
+          </DialogHeader>
+          {note ? (
+            <blockquote className="rounded-md border-l-4 bg-muted/50 px-3 py-2 text-sm">
+              <span className="text-xs text-muted-foreground">Your note</span>
+              <p className="whitespace-pre-wrap">{note}</p>
+            </blockquote>
+          ) : (
+            <p className="text-sm text-muted-foreground">No note attached.</p>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setConfirmAction(null)}>
+              Go back
+            </Button>
+            <Button
+              variant={
+                confirmAction && DESTRUCTIVE.includes(confirmAction)
+                  ? "destructive"
+                  : "default"
+              }
+              onClick={() =>
+                confirmAction &&
+                actionMutation.mutate({ action: confirmAction })
+              }
+              disabled={actionMutation.isPending}
+            >
+              {actionMutation.isPending && (
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {confirmAction && ACTION_LABELS[confirmAction]}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Reprint: whole order, or just the sheet that failed. */}
-      <Dialog open={!!reprintTarget} onOpenChange={() => setReprintTarget(null)}>
+      <Dialog
+        open={!!reprintTarget}
+        onOpenChange={(open) => !open && setReprintTarget(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {reprintTarget === "all" ? "Reprint the whole order" : "Reprint this file"}
+              {reprintTarget === "all"
+                ? "Reprint the whole order"
+                : "Reprint this file"}
             </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+            <DialogDescription>
               {reprintTarget === "all"
                 ? `All ${order.files.length} file(s) will be sent to the printer again. The previous run stays in the history.`
-                : `Only “${reprintTarget?.file_name}” will be printed again. The pages you selected (${reprintTarget?.page_selection_label}) are kept.`}
-            </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="reprint-note">Reason (optional)</Label>
-              <Textarea id="reprint-note" rows={2} value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="e.g. printer cancelled the job, faded output, customer lost a copy" />
-            </div>
-            <Separator />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setReprintTarget(null)}>Cancel</Button>
-              <Button
-                onClick={() => actionMutation.mutate({
-                  action: "reprint",
-                  extra: reprintTarget !== "all" && reprintTarget
-                    ? { file_id: reprintTarget.id } : {},
-                })}
-                disabled={actionMutation.isPending}>
-                <Printer className="mr-2 h-4 w-4" /> Send to printer
-              </Button>
-            </div>
+                : `Only “${reprintFile?.file_name}” will be printed again. The pages you selected (${reprintFile?.page_selection_label}) are kept.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="reprint-note">Reason (optional)</Label>
+            <Textarea
+              id="reprint-note"
+              rows={2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. printer cancelled the job, faded output, customer lost a copy"
+            />
           </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setReprintTarget(null)}>
+              Go back
+            </Button>
+            <Button
+              onClick={() =>
+                actionMutation.mutate({
+                  action: "reprint",
+                  extra: reprintFile ? { file_id: reprintFile.id } : {},
+                })
+              }
+              disabled={actionMutation.isPending}
+            >
+              {actionMutation.isPending ? (
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Printer aria-hidden className="mr-2 h-4 w-4" />
+              )}
+              Send to printer
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   );
 }
 
-function Row({ label, value, emphasis }: {
-  label: string; value: string; emphasis?: boolean;
-}) {
+/* ----------------------------------------------------------- helpers */
+
+function DetailSkeleton() {
   return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={cn("tabular-nums", emphasis && "font-semibold")}>{value}</span>
+    <div className="space-y-6" aria-busy="true" aria-label="Loading order">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-4 w-48" />
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <Skeleton className="h-96 w-full rounded-lg" />
+        <div className="space-y-6">
+          <Skeleton className="h-64 w-full rounded-lg" />
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+      </div>
     </div>
   );
 }
 
-function PrintJobRow({ job, onReprint }: { job: PrintJob; onReprint: () => void }) {
+function AlertBanner({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
   return (
-    <li className="rounded-md border p-2.5 text-sm">
+    <div
+      role="alert"
+      className="flex items-start gap-3 rounded-lg border border-amber-300 border-l-4 border-l-amber-500 bg-amber-50 p-4 dark:border-amber-800 dark:border-l-amber-500 dark:bg-amber-950/40"
+    >
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400"
+      />
+      <div className="space-y-1 text-sm text-amber-900 dark:text-amber-100">
+        <p className="font-medium">{title}</p>
+        <div className="space-y-1 text-xs text-amber-900/90 dark:text-amber-100/90">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({
+  label,
+  value,
+  emphasis,
+  capitalize,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+  capitalize?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "min-w-0 break-words text-right tabular-nums",
+          emphasis && "font-semibold text-amber-700 dark:text-amber-400",
+          capitalize && "capitalize",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function PrintJobRow({
+  job,
+  onReprint,
+}: {
+  job: PrintJob;
+  onReprint: () => void;
+}) {
+  return (
+    <li className="rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold",
-            printJobStatusStyle(job.status))}>
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+              printJobStatusStyle(job.status),
+            )}
+          >
             {printJobStatusLabel(job)}
           </span>
-          <span className="truncate font-medium">{job.file_name || job.epson_job_id}</span>
+          <span className="truncate font-medium">
+            {job.file_name || job.epson_job_id}
+          </span>
           {job.is_reprint && (
-            <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
-              reprint
+            <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200">
+              Reprint
             </span>
           )}
         </div>
         {job.is_printer_cancelled && (
           <Button variant="outline" size="sm" onClick={onReprint}>
-            <Printer className="mr-2 h-3 w-4" /> Reprint
+            <Printer aria-hidden className="mr-2 h-4 w-4" /> Reprint
           </Button>
         )}
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
         {job.pages_label} · {job.epson_status || job.status}
-        {job.completed_at ? ` · finished ${new Date(job.completed_at).toLocaleString()}` : ""}
+        {job.completed_at ? ` · finished ${formatDate(job.completed_at)}` : ""}
       </p>
       {job.error_message && (
-        <p className="mt-1 rounded bg-red-50 px-2 py-1 text-xs text-red-700">
+        <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
           {job.error_message}
         </p>
       )}
