@@ -1,0 +1,19 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 16px;color:#374151;font-size:15px;">Hi {{ client_name }},</p>
+<p style="margin:0 0 20px;color:#374151;font-size:15px;line-height:1.5;">{{ message }}</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#eff6ff;border-radius:10px;">
+  <tr><td style="padding:16px 18px;">
+    <p style="margin:0 0 4px;color:#1e40af;font-size:12px;letter-spacing:.06em;text-transform:uppercase;">Your tracking ID</p>
+    <p style="margin:0;color:#1e3a8a;font-size:26px;font-weight:700;letter-spacing:.04em;">{{ tracking_id }}</p>
+    <p style="margin:8px 0 0;color:#1e40af;font-size:13px;">Save it — you need it (plus your contact details) to check on your order and to collect your printouts.</p>
+  </td></tr>
+</table>
+<table style="margin:0 0 24px;border-collapse:collapse;font-size:14px;color:#374151;">
+  <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Files</td><td style="padding:4px 0;">{{ file_count }}</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Order total</td><td style="padding:4px 0;">PHP {{ subtotal }}</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Balance due</td><td style="padding:4px 0;">PHP {{ balance_due }}</td></tr>
+</table>
+<p style="margin:0;"><a href="{{ track_url }}" style="color:#2563eb;">Track your order</a></p>
+<p style="margin:24px 0 0;color:#9ca3af;font-size:12px;">Thanks for printing with us! — PrintEasy</p>
+{% endblock %}

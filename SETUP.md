@@ -509,7 +509,27 @@ docker compose logs -f printservice-backend
 
 ## 10. Email Notifications (Optional)
 
-By default, emails are printed to the console (DEBUG mode). To send real emails:
+The shop is emailed automatically in two situations, both driven by the order's
+status transitions (`apps/orders/services/notifications.py`):
+
+| Trigger | Email |
+|---------|-------|
+| An order is placed | The **tracking ID** (subject and body), order total and balance — the only handle a guest has on their order. |
+| Every status update | The new status, the staff note when there is one, the balance due and the tracking link — `pending review`, `revision requested`, `approved`, `printing`, `on hold`, `cancelled at printer`, `ready for pickup`, `rejected`, `cancelled`, `completed`. |
+
+Who receives them:
+
+- **Signed-in customer** → their account email.
+- **Guest who chose email** as the contact method → that contact address.
+- **Guest who left only a phone/Facebook contact** → no email (they track with
+  their tracking ID at `/track`).
+
+Emails are sent as plain text plus an HTML alternative. Re-applying the *same*
+status (e.g. the checkout endpoint re-saving "awaiting payment") never sends a
+duplicate, and a mail server problem is logged, never raised — a dead SMTP host
+can’t fail an order.
+
+By default, emails are printed to the console (DEBUG mode). To send real ones:
 
 ```env
 # Use SMTP backend
@@ -520,7 +540,13 @@ EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
-DEFAULT_FROM_EMAIL=Print Shop <your-email@gmail.com>
+DEFAULT_FROM_EMAIL=printshop@example.com
+
+# Seconds an unreachable mail server may stall a request (emails are sent inline)
+EMAIL_TIMEOUT=10
+
+# Master switch — set to false to pause all customer emails
+EMAIL_NOTIFICATIONS_ENABLED=True
 ```
 
 ### Gmail Setup

@@ -1,0 +1,14 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 16px;color:#374151;font-size:15px;">Hi {{ client_name }},</p>
+{% if note %}<p style="margin:0 0 16px;padding:12px 14px;background:#fef3c7;border-radius:8px;color:#78350f;font-size:14px;"><strong>Note from our staff:</strong> {{ note }}</p>{% endif %}
+<p style="margin:0 0 20px;color:#1f2937;font-size:15px;line-height:1.5;">{{ message }}</p>
+<p style="margin:0 0 6px;color:#6b7280;font-size:13px;">Your order is currently</p>
+<p style="margin:0 0 20px;color:#111827;font-size:17px;font-weight:600;">{{ status_display }}</p>
+<table style="margin:0 0 24px;border-collapse:collapse;font-size:14px;color:#374151;">
+  <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Order</td><td style="padding:4px 0;font-weight:600;">{{ tracking_id }}</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#6b7280;">Balance due</td><td style="padding:4px 0;">PHP {{ balance_due }}</td></tr>
+</table>
+<p style="margin:0;"><a href="{{ track_url }}" style="color:#2563eb;">Track your order</a></p>
+<p style="margin:24px 0 0;color:#9ca3af;font-size:12px;">— PrintEasy</p>
+{% endblock %}

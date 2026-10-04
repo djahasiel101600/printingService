@@ -1,0 +1,12 @@
+Hi {{ client_name }},
+{% if note %}
+Note from our staff: {{ note }}
+{% endif %}
+{{ message }}
+
+Order: {{ tracking_id }} — {{ status_display }}
+Balance due: PHP {{ balance_due }}
+
+Track your order any time at {{ track_url }}
+
+— PrintEasy

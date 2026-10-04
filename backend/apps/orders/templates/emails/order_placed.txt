@@ -1,0 +1,17 @@
+Hi {{ client_name }},
+
+{{ message }}
+
+YOUR TRACKING ID: {{ tracking_id }}
+
+Save it — you need it (plus the contact details you gave us) to check on your
+order any time, and to collect your printouts.
+
+Files: {{ file_count }} · Order total: PHP {{ subtotal }}
+Balance due: PHP {{ balance_due }}
+
+Track your order: {{ track_url }}
+
+Thanks for printing with us!
+
+— PrintEasy
