@@ -661,6 +661,7 @@ curl http://localhost:5173
 | GET | `/api/orders/mine/` | List my orders |
 | GET | `/api/orders/{id}/` | Order detail |
 | GET | `/api/track/{tracking_id}/` | Public tracking |
+| DELETE | `/api/admin/orders/{id}/` | Permanently delete an order: refunds paid payments first (shop admin) |
 
 ### Payments
 | Method | Endpoint | Description |

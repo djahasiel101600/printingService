@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.pricing.models import PricingSettings
 from apps.pricing.quotation import compute_quote
 from apps.pricing.views import IsShopAdmin, IsShopStaff
+from apps.printing.models import PrintJob
 from apps.printing.services import (
     printable_files, submit_order_to_printer, sync_print_jobs, unprintable_files,
 )
@@ -565,6 +566,51 @@ class AdminOrderDetailView(APIView):
         order = get_object_or_404(Order, pk=pk)
         sync_print_jobs(order)  # refresh Epson state before showing
         return Response(AdminOrderSerializer(order).data)
+
+    def delete(self, request, pk):
+        """D of CRUD: permanently remove an order and everything under it.
+
+        The admin side could already create, read and update orders but
+        never delete one. Because this is irreversible and takes the
+        payment history with it, it follows the money-action rules of
+        ``AdminOrderActionView``:
+
+        * shop-admin only (approvers just work the queue);
+        * paid payments are refunded first — mirroring cancel/reject;
+        * refused while an Epson job is still in flight, so the printer
+          can never keep printing an order with no record left behind.
+        """
+        if not request.user.is_shop_admin:
+            return Response({"detail": "Only a shop admin can delete an order."},
+                            status=403)
+        order = get_object_or_404(Order, pk=pk)
+
+        in_flight = order.print_jobs.filter(status__in=[
+            PrintJob.JobStatus.CREATED, PrintJob.JobStatus.SUBMITTED,
+            PrintJob.JobStatus.EXECUTED, PrintJob.JobStatus.PRINTING,
+        ])
+        if in_flight.exists():
+            return Response(
+                {"detail": "This order still has jobs in the printer queue. "
+                           "Wait for them to finish before deleting it."},
+                status=409,
+            )
+
+        from apps.payments.services import refund_order
+        refund_order(order, reason="deleted_by_shop")  # no-op when nothing is paid
+
+        # Django removes the rows but never the bytes: clear every stored
+        # file first (original, edited, final, plus each archived version);
+        # the cascade then takes the rows.
+        for order_file in order.files.all():
+            for field in (order_file.file, order_file.edited_file, order_file.final_file):
+                if field:
+                    field.delete(save=False)
+            for version in order_file.versions.all():
+                if version.file:
+                    version.file.delete(save=False)
+        order.delete()
+        return Response(status=204)
 
 
 class AdminOrderActionView(APIView):

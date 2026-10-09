@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Loader2,
   Printer,
   Save,
+  Trash2,
   Wallet,
 } from "lucide-react";
 
@@ -106,6 +107,7 @@ const humanize = (s?: string | null) => (s ? s.replace(/_/g, " ") : "—");
 
 export default function AdminOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [note, setNote] = useState("");
@@ -115,6 +117,7 @@ export default function AdminOrderDetailPage() {
   const [reprintTarget, setReprintTarget] = useState<OrderFile | "all" | null>(
     null,
   );
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const {
     data: order,
@@ -166,6 +169,18 @@ export default function AdminOrderDetailPage() {
     onSuccess: (data) => {
       toast.success("Internal notes saved.");
       queryClient.setQueryData(["admin-order", id], data);
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  // D of CRUD. The API restricts deletion to shop admins (mirrors cancel),
+  // so the button only renders for them too.
+  const deleteMutation = useMutation({
+    mutationFn: async () => (await api.delete(`/admin/orders/${id}/`)).status,
+    onSuccess: () => {
+      toast.success("Order deleted.");
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+      navigate("/admin");
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
   });
@@ -429,6 +444,20 @@ export default function AdminOrderDetailPage() {
                   ))}
                 </div>
               )}
+
+              {user?.is_shop_admin && (
+                <>
+                  <Separator className="my-3" />
+                  <Button
+                    variant="destructive"
+                    className="w-full justify-start"
+                    onClick={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Delete order
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -650,6 +679,40 @@ export default function AdminOrderDetailPage() {
                 <Printer aria-hidden className="mr-2 h-4 w-4" />
               )}
               Send to printer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------ delete dialog */}
+      <Dialog
+        open={confirmDelete}
+        onOpenChange={(open) => !open && setConfirmDelete(false)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this order permanently?</DialogTitle>
+            <DialogDescription>
+              Order {order.tracking_id}, its files and versions, print jobs,
+              payment records and history will be removed for good. Any paid
+              payments are refunded first. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setConfirmDelete(false)}>
+              Go back
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 aria-hidden className="mr-2 h-4 w-4" />
+              )}
+              Delete forever
             </Button>
           </DialogFooter>
         </DialogContent>

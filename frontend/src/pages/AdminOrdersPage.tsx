@@ -45,6 +45,13 @@ const ADMIN_STATUSES = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+// Queues that usually need an admin to act; shown with a small dot in the filter bar.
+const NEEDS_ACTION = new Set([
+  "pending_review",
+  "revision_requested",
+  "print_cancelled",
+]);
+
 type Flag = { text: string; tone: "urgent" | "info" };
 
 /** Things an admin should notice before opening an order. */
@@ -223,6 +230,7 @@ function OrderCardSkeleton() {
 export default function AdminOrdersPage() {
   const queryClient = useQueryClient();
   const searchRef = useRef<HTMLInputElement>(null);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -251,6 +259,20 @@ export default function AdminOrdersPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Keep the selected status visible when the tab strip scrolls sideways.
+  useEffect(() => {
+    const active = tabsScrollRef.current?.querySelector<HTMLElement>(
+      '[data-state="active"]',
+    );
+    active?.scrollIntoView({
+      inline: "center",
+      block: "nearest",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }, [tab]);
 
   const {
     data: orders,
@@ -364,7 +386,7 @@ export default function AdminOrdersPage() {
       </div>
 
       {/* Filters stay visible while scrolling a long list */}
-      <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b bg-background/90 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:mx-0 sm:rounded-lg sm:border sm:px-3">
+      <div className="sticky top-0 z-10 -mx-4 space-y-2.5 border-b bg-background/90 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:mx-0 sm:rounded-lg sm:border sm:px-3">
         <div className="relative w-full sm:max-w-md">
           <Search
             aria-hidden
@@ -410,22 +432,93 @@ export default function AdminOrdersPage() {
           )}
         </div>
 
-        {/* Status filter: scrolls sideways on small screens instead of wrapping into a tall block */}
+        {/* Status filter: pill tabs that scroll sideways (with faded edges) instead of wrapping */}
         <Tabs value={tab} onValueChange={setTab}>
-          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-            <TabsList className="h-auto w-max justify-start">
+          <div
+            ref={tabsScrollRef}
+            className={cn(
+              "-mx-4 overflow-x-auto px-4 py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "[mask-image:linear-gradient(to_right,transparent,black_16px,black_calc(100%-16px),transparent)]",
+              "sm:mx-0 sm:px-0 sm:[mask-image:none]",
+            )}
+          >
+            <TabsList className="h-auto w-max justify-start gap-1.5 bg-transparent p-0">
               {ADMIN_STATUSES.map((s) => (
                 <TabsTrigger
                   key={s.value}
                   value={s.value}
-                  className="whitespace-nowrap"
+                  className={cn(
+                    "gap-1.5 whitespace-nowrap rounded-full border border-transparent bg-muted/60 px-3 py-1 text-[13px] text-muted-foreground transition-colors motion-reduce:transition-none",
+                    "hover:bg-muted hover:text-foreground",
+                    "data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none",
+                  )}
                 >
+                  {NEEDS_ACTION.has(s.value) && (
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                    />
+                  )}
                   {s.label}
+                  {NEEDS_ACTION.has(s.value) && (
+                    <span className="sr-only"> (needs action)</span>
+                  )}
                 </TabsTrigger>
               ))}
             </TabsList>
           </div>
         </Tabs>
+
+        {/* Active filters, each removable on its own */}
+        {hasFilters && (
+          <div
+            role="group"
+            aria-label="Active filters"
+            className="flex flex-wrap items-center gap-1.5 text-xs"
+          >
+            <span className="text-muted-foreground">Filtering by</span>
+            {tab && (
+              <span className="inline-flex items-center gap-1 rounded-full border bg-background py-0.5 pl-2.5 pr-1 font-medium">
+                Status: {activeLabel}
+                <button
+                  type="button"
+                  aria-label={`Remove status filter: ${activeLabel}`}
+                  onClick={() => setTab("")}
+                  className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X aria-hidden className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {search && (
+              <span className="inline-flex max-w-[16rem] items-center gap-1 rounded-full border bg-background py-0.5 pl-2.5 pr-1 font-medium">
+                <span className="truncate">“{search}”</span>
+                <button
+                  type="button"
+                  aria-label={`Remove search filter: ${search}`}
+                  onClick={() => {
+                    setSearchInput("");
+                    setSearch("");
+                  }}
+                  className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X aria-hidden className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {tab && search && (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                onClick={clearAll}
+                className="h-auto px-1 py-0 text-xs"
+              >
+                Clear all
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* A refresh failed but we still have a list to show */}
