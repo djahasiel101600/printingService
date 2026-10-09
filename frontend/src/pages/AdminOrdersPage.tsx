@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -27,8 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api } from "@/lib/api";
-import { apiErrorMessage } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 
@@ -86,9 +85,30 @@ const formatDate = (iso: string) =>
     minute: "2-digit",
   });
 
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+/** "5 minutes ago", "yesterday" — falls back to a short date after a week. */
+function formatRelative(iso: string) {
+  const diffSec = (new Date(iso).getTime() - Date.now()) / 1000;
+  const abs = Math.abs(diffSec);
+  if (abs < 60) return "just now";
+  if (abs < 3600) return rtf.format(Math.round(diffSec / 60), "minute");
+  if (abs < 86400) return rtf.format(Math.round(diffSec / 3600), "hour");
+  if (abs < 7 * 86400) return rtf.format(Math.round(diffSec / 86400), "day");
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function OrderCard({ order }: { order: Order }) {
   const flags = attentionFor(order);
   const hasUrgent = flags.some((f) => f.tone === "urgent");
+  // Urgent items first so they're the first thing scanned.
+  const sortedFlags = [...flags].sort(
+    (a, b) => Number(b.tone === "urgent") - Number(a.tone === "urgent"),
+  );
   const fileCount = order.files.length;
   const pageCount = order.files.reduce(
     (total, f) => total + f.selected_page_count,
@@ -98,7 +118,8 @@ function OrderCard({ order }: { order: Order }) {
   return (
     <Card
       className={cn(
-        "group relative overflow-hidden transition-colors hover:bg-muted/40",
+        "group relative overflow-hidden transition-all motion-reduce:transition-none",
+        "hover:-translate-y-px hover:border-foreground/20 hover:bg-muted/40 hover:shadow-sm motion-reduce:hover:translate-y-0",
         "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2",
         hasUrgent && "border-l-4 border-l-amber-500",
       )}
@@ -109,9 +130,10 @@ function OrderCard({ order }: { order: Order }) {
             {/* Stretched link: the whole card is clickable, one tab stop per order. */}
             <Link
               to={`/admin/orders/${order.id}`}
-              className="block truncate font-semibold leading-tight outline-none after:absolute after:inset-0 after:content-['']"
+              className="block truncate font-mono text-[0.95rem] font-semibold leading-tight tracking-tight outline-none group-hover:underline group-hover:underline-offset-4 after:absolute after:inset-0 after:content-['']"
             >
               {order.tracking_id}
+              <span className="sr-only">, order for {order.client_name}</span>
             </Link>
             <p className="truncate text-sm text-foreground/80">
               {order.client_name}
@@ -121,7 +143,7 @@ function OrderCard({ order }: { order: Order }) {
             <StatusBadge status={order.status} display={order.status_display} />
             <ChevronRight
               aria-hidden
-              className="hidden h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 sm:block"
+              className="hidden h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none sm:block"
             />
           </div>
         </div>
@@ -130,26 +152,30 @@ function OrderCard({ order }: { order: Order }) {
           <p className="flex items-center gap-1.5">
             <FileText aria-hidden className="h-3.5 w-3.5" />
             <span>
-              {fileCount} {fileCount === 1 ? "file" : "files"}, {pageCount}{" "}
+              {fileCount} {fileCount === 1 ? "file" : "files"} · {pageCount}{" "}
               {pageCount === 1 ? "page" : "pages"}
             </span>
           </p>
           <p className="flex items-baseline gap-3">
-            <time dateTime={order.created_at} className="text-xs">
-              {formatDate(order.created_at)}
+            <time
+              dateTime={order.created_at}
+              title={formatDate(order.created_at)}
+              className="text-xs"
+            >
+              {formatRelative(order.created_at)}
             </time>
-            <span className="font-semibold tabular-nums text-foreground">
+            <span className="text-base font-semibold tabular-nums text-foreground">
               {peso(order.subtotal_peso)}
             </span>
           </p>
         </div>
 
-        {flags.length > 0 && (
+        {sortedFlags.length > 0 && (
           <ul
             aria-label="Needs attention"
             className="flex flex-wrap gap-1.5 border-t pt-3"
           >
-            {flags.map((flag) => (
+            {sortedFlags.map((flag) => (
               <li
                 key={flag.text}
                 className={cn(
@@ -174,8 +200,29 @@ function OrderCard({ order }: { order: Order }) {
   );
 }
 
+function OrderCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-36" />
+            <Skeleton className="h-3.5 w-24" />
+          </div>
+          <Skeleton className="h-6 w-24 rounded-full" />
+        </div>
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-3.5 w-28" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminOrdersPage() {
   const queryClient = useQueryClient();
+  const searchRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -185,6 +232,25 @@ export default function AdminOrdersPage() {
     const handle = setTimeout(() => setSearch(searchInput.trim()), 350);
     return () => clearTimeout(handle);
   }, [searchInput]);
+
+  // Press "/" anywhere (outside a text field) to jump to search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable)
+      )
+        return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const {
     data: orders,
@@ -222,21 +288,51 @@ export default function AdminOrdersPage() {
   const activeLabel =
     ADMIN_STATUSES.find((s) => s.value === tab)?.label ?? "All";
   const isRefreshing = isFetching && !isLoading;
+  const isTyping = searchInput.trim() !== search;
+  const hasFilters = Boolean(search || tab);
+
+  const clearAll = () => {
+    setSearchInput("");
+    setSearch("");
+    setTab("");
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight">Orders</h1>
-          <p className="text-sm text-muted-foreground" aria-live="polite">
-            {orders
-              ? `${orders.length} ${orders.length === 1 ? "order" : "orders"} · ${activeLabel}`
-              : "Loading orders…"}
-            {isRefreshing && (
+          <p
+            className="flex items-center text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            {orders ? (
+              <>
+                <span className="font-medium tabular-nums text-foreground">
+                  {orders.length}
+                </span>
+                &nbsp;{orders.length === 1 ? "order" : "orders"}
+                <span aria-hidden className="mx-1.5">
+                  ·
+                </span>
+                {activeLabel}
+                {search && (
+                  <>
+                    <span aria-hidden className="mx-1.5">
+                      ·
+                    </span>
+                    matching “{search}”
+                  </>
+                )}
+              </>
+            ) : (
+              "Loading orders…"
+            )}
+            {(isRefreshing || isTyping) && (
               <Loader2
                 aria-hidden
-                className="ml-2 inline h-3 w-3 animate-spin"
+                className="ml-2 h-3 w-3 animate-spin motion-reduce:animate-none"
               />
             )}
           </p>
@@ -247,12 +343,14 @@ export default function AdminOrdersPage() {
             size="sm"
             onClick={() => syncMutation.mutate()}
             disabled={syncMutation.isPending}
+            title="Fetch the latest status from the printers"
           >
             <RefreshCw
               aria-hidden
               className={cn(
                 "mr-2 h-4 w-4",
-                syncMutation.isPending && "animate-spin",
+                syncMutation.isPending &&
+                  "animate-spin motion-reduce:animate-none",
               )}
             />
             {syncMutation.isPending ? "Syncing…" : "Sync printers"}
@@ -265,56 +363,92 @@ export default function AdminOrdersPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative w-full sm:max-w-md">
-        <Search
-          aria-hidden
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-        />
-        <Input
-          type="search"
-          aria-label="Search orders"
-          placeholder="Search tracking ID, name, email or phone…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          className="pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
-        />
-        {searchInput && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Clear search"
-            onClick={() => setSearchInput("")}
-            className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+      {/* Filters stay visible while scrolling a long list */}
+      <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b bg-background/90 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:mx-0 sm:rounded-lg sm:border sm:px-3">
+        <div className="relative w-full sm:max-w-md">
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            ref={searchRef}
+            type="search"
+            aria-label="Search orders"
+            aria-keyshortcuts="/"
+            placeholder="Search tracking ID, name, email or phone…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && searchInput) {
+                e.preventDefault();
+                setSearchInput("");
+              }
+            }}
+            className="pl-9 pr-16 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {searchInput ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchInput("");
+                searchRef.current?.focus();
+              }}
+              className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : (
+            <kbd
+              aria-hidden
+              className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border bg-muted px-1.5 font-mono text-[10px] text-muted-foreground sm:block"
+            >
+              /
+            </kbd>
+          )}
+        </div>
+
+        {/* Status filter: scrolls sideways on small screens instead of wrapping into a tall block */}
+        <Tabs value={tab} onValueChange={setTab}>
+          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+            <TabsList className="h-auto w-max justify-start">
+              {ADMIN_STATUSES.map((s) => (
+                <TabsTrigger
+                  key={s.value}
+                  value={s.value}
+                  className="whitespace-nowrap"
+                >
+                  {s.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+        </Tabs>
       </div>
 
-      {/* Status filter: scrolls sideways on small screens instead of wrapping into a tall block */}
-      <Tabs value={tab} onValueChange={setTab}>
-        <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-          <TabsList className="h-auto w-max justify-start">
-            {ADMIN_STATUSES.map((s) => (
-              <TabsTrigger
-                key={s.value}
-                value={s.value}
-                className="whitespace-nowrap"
-              >
-                {s.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+      {/* A refresh failed but we still have a list to show */}
+      {isError && orders && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm"
+        >
+          <span className="flex items-center gap-2 text-destructive">
+            <AlertTriangle aria-hidden className="h-4 w-4" />
+            Couldn't refresh — showing the last loaded results.
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => refetch()}>
+            Retry
+          </Button>
         </div>
-      </Tabs>
+      )}
 
       {/* Results */}
       {isLoading ? (
         <div className="space-y-3" aria-busy="true" aria-label="Loading orders">
           {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 w-full rounded-lg" />
+            <OrderCardSkeleton key={i} />
           ))}
         </div>
       ) : isError && !orders ? (
@@ -335,7 +469,7 @@ export default function AdminOrdersPage() {
       ) : orders && orders.length > 0 ? (
         <ul
           className={cn(
-            "space-y-3 transition-opacity",
+            "space-y-3 transition-opacity motion-reduce:transition-none",
             isRefreshing && "opacity-60",
           )}
         >
@@ -348,16 +482,23 @@ export default function AdminOrdersPage() {
       ) : (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-14 text-center">
-            {search ? (
-              <SearchX aria-hidden className="h-8 w-8 text-muted-foreground" />
-            ) : (
-              <Inbox aria-hidden className="h-8 w-8 text-muted-foreground" />
-            )}
+            <div className="rounded-full bg-muted p-3">
+              {search ? (
+                <SearchX
+                  aria-hidden
+                  className="h-6 w-6 text-muted-foreground"
+                />
+              ) : (
+                <Inbox aria-hidden className="h-6 w-6 text-muted-foreground" />
+              )}
+            </div>
             <div className="space-y-1">
               <p className="font-medium">
                 {search
                   ? `No orders match "${search}"`
-                  : `No ${activeLabel.toLowerCase()} orders`}
+                  : tab
+                    ? `No ${activeLabel.toLowerCase()} orders`
+                    : "No orders yet"}
               </p>
               <p className="text-sm text-muted-foreground">
                 {search
@@ -367,19 +508,21 @@ export default function AdminOrdersPage() {
                     : "New orders will appear here."}
               </p>
             </div>
-            {(search || tab) && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSearchInput("");
-                  setSearch("");
-                  setTab("");
-                }}
-              >
-                Clear search and filters
-              </Button>
-            )}
+            <div className="flex flex-wrap justify-center gap-2">
+              {hasFilters && (
+                <Button variant="outline" size="sm" onClick={clearAll}>
+                  Clear search and filters
+                </Button>
+              )}
+              {!hasFilters && (
+                <Button asChild size="sm">
+                  <Link to="/admin/orders/new">
+                    <Plus aria-hidden className="mr-2 h-4 w-4" /> Create an
+                    order
+                  </Link>
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

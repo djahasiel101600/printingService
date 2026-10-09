@@ -647,6 +647,17 @@ class AdminOrderActionView(APIView):
             order.set_status(Order.Status.REJECTED, note=note, actor=request.user)
             refund_order(order, reason="rejected_by_shop")
         elif action == "request_revision":
+            # The message is the customer's only instruction, and their
+            # resubmit UI is built around it. An empty note used to reach
+            # the client as "", which left them replacing files with no
+            # guidance and no way to hand the order back — refuse to
+            # create that state here (the admin UI blocks it too).
+            if not note.strip():
+                return Response(
+                    {"detail": "Add a message for the customer — it is shown "
+                               "with the revision request."},
+                    status=400,
+                )
             order.revision_note = note
             order.save(update_fields=["revision_note"])
             order.set_status(Order.Status.REVISION_REQUESTED, note=note, actor=request.user)

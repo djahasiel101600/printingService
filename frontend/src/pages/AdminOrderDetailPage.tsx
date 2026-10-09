@@ -562,7 +562,12 @@ export default function AdminOrderDetailPage() {
                 " This can't be undone."}
             </DialogDescription>
           </DialogHeader>
-          {note ? (
+          {confirmAction === "request_revision" && !note.trim() ? (
+            <p className="text-sm text-destructive">
+              A message is required — the customer sees it with the
+              revision request and needs it to know what to fix.
+            </p>
+          ) : note ? (
             <blockquote className="rounded-md border-l-4 bg-muted/50 px-3 py-2 text-sm">
               <span className="text-xs text-muted-foreground">Your note</span>
               <p className="whitespace-pre-wrap">{note}</p>
@@ -584,7 +589,10 @@ export default function AdminOrderDetailPage() {
                 confirmAction &&
                 actionMutation.mutate({ action: confirmAction })
               }
-              disabled={actionMutation.isPending}
+              disabled={
+                actionMutation.isPending ||
+                (confirmAction === "request_revision" && !note.trim())
+              }
             >
               {actionMutation.isPending && (
                 <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" />

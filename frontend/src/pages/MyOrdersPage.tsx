@@ -57,7 +57,9 @@ export default function MyOrdersPage() {
     <div className="space-y-6">
       <PageHeader
         title="My Orders"
-        description={!user && "Orders placed on this device without an account."}
+        description={
+          !user && "Orders placed on this device without an account."
+        }
         actions={
           <Button asChild>
             <Link to="/order">
@@ -83,7 +85,11 @@ export default function MyOrdersPage() {
         empty={
           <EmptyState
             icon={PackageOpen}
-            title={user ? "You haven't placed any orders yet" : "No orders on this device yet"}
+            title={
+              user
+                ? "You haven't placed any orders yet"
+                : "No orders on this device yet"
+            }
             description={
               user
                 ? "Upload a file, choose your settings, and we'll review it before printing."
@@ -110,7 +116,10 @@ export default function MyOrdersPage() {
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
                 <div>
                   <CardTitle className="text-base">
-                    <Link to={`/orders/${order.id}`} className="hover:underline">
+                    <Link
+                      to={`/orders/${order.id}`}
+                      className="hover:underline"
+                    >
                       {order.tracking_id}
                     </Link>
                   </CardTitle>
@@ -124,7 +133,8 @@ export default function MyOrdersPage() {
               </CardHeader>
               <CardContent className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <div className="text-muted-foreground">
-                  {order.files.length} file(s) · ₱{order.subtotal_peso.toFixed(2)}
+                  {order.files.length} file(s) · ₱
+                  {order.subtotal_peso.toFixed(2)}
                   {order.balance_due_peso > 0 && (
                     <span className="ml-2 text-attention">
                       (balance: ₱{order.balance_due_peso.toFixed(2)})

@@ -45,13 +45,23 @@ export function PageHeader({
       )}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
-          {eyebrow && <div className="text-sm font-medium text-muted-foreground">{eyebrow}</div>}
+          {eyebrow && (
+            <div className="text-sm font-medium text-muted-foreground">
+              {eyebrow}
+            </div>
+          )}
           <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
           {description && (
-            <div className="text-sm text-muted-foreground sm:text-base">{description}</div>
+            <div className="text-sm text-muted-foreground sm:text-base">
+              {description}
+            </div>
           )}
         </div>
-        {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+        {actions && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   );

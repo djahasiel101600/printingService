@@ -279,3 +279,33 @@ class ResubmitTests(RevisionReuploadTestCase):
         file_payload = response.json()["files"][0]
         self.assertEqual(file_payload["current_version"], 2)
         self.assertTrue(file_payload["versions"][0]["file"])
+
+
+class RequestRevisionNoteTests(RevisionReuploadTestCase):
+    """The revision message is the customer's only instruction.
+
+    An empty note used to reach the client as "", which blanked out the
+    whole revision card on their order page — Replace buttons with no
+    resubmit button, so the order could never come back to the queue.
+    The API now refuses to create that state.
+    """
+
+    def test_request_revision_requires_a_message(self):
+        order = self.submit()
+        self.pay(order)
+
+        blank = self.api.post(
+            f"/api/admin/orders/{order['id']}/actions/request_revision/",
+            {"note": "   "}, format="json")
+        self.assertEqual(blank.status_code, 400, blank.content)
+        self.assertEqual(Order.objects.get(pk=order["id"]).status,
+                         Order.Status.PENDING_REVIEW)
+
+        ok = self.api.post(
+            f"/api/admin/orders/{order['id']}/actions/request_revision/",
+            {"note": "Page 2 is cut off — please re-upload."}, format="json")
+        self.assertEqual(ok.status_code, 200, ok.content)
+        revised = Order.objects.get(pk=order["id"])
+        self.assertEqual(revised.status, Order.Status.REVISION_REQUESTED)
+        self.assertEqual(revised.revision_note,
+                         "Page 2 is cut off — please re-upload.")
