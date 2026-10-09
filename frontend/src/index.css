@@ -49,22 +49,29 @@
   }
 }
 
-/* Kiosk poster: printing the admin settings page prints ONLY the QR poster
-   (Print button on the "Scan to print" card). */
+/* Print-scoped regions: printing shows ONLY the marked element and hides the
+   app chrome. Used by the kiosk QR poster (admin settings) and the order
+   receipt (order detail pages). Both mark their printable card with a
+   `.print-*` class; the on-screen Print button sits outside that region, so
+   it never appears on the paper. */
 @media print {
   body * {
     visibility: hidden;
   }
   .print-poster,
-  .print-poster * {
+  .print-poster *,
+  .print-receipt,
+  .print-receipt * {
     visibility: visible;
   }
-  .print-poster {
+  .print-poster,
+  .print-receipt {
     position: fixed;
     inset: 0;
     margin: auto;
     border: none !important;
     box-shadow: none !important;
     background: white !important;
+    color: black !important;
   }
 }

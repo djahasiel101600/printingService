@@ -30,6 +30,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAuth } from "@/components/auth";
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import FileReviewCard from "@/components/FileReviewCard";
+import OrderReceiptDialog from "@/components/OrderReceiptDialog";
 import { Textarea } from "@/components/ui/textarea";
 import { printJobStatusLabel, printJobStatusStyle } from "@/lib/constants";
 import { api, apiErrorMessage } from "@/lib/api";
@@ -118,6 +119,7 @@ export default function AdminOrderDetailPage() {
     null,
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
 
   const {
     data: order,
@@ -458,6 +460,16 @@ export default function AdminOrderDetailPage() {
                   </Button>
                 </>
               )}
+
+              <Separator className="my-3" />
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => setShowReceipt(true)}
+              >
+                <Printer className="mr-2 h-4 w-4" aria-hidden="true" />
+                View receipt
+              </Button>
             </CardContent>
           </Card>
 
@@ -569,6 +581,12 @@ export default function AdminOrderDetailPage() {
         orderId={order.id}
         allowVariants
         onClose={() => setPreviewFile(null)}
+      />
+
+      <OrderReceiptDialog
+        order={order}
+        open={showReceipt}
+        onClose={() => setShowReceipt(false)}
       />
 
       {/* ------------------------------------------------ confirm dialog */}

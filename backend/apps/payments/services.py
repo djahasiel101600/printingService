@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from apps.orders.models import Order
 from apps.pricing.models import PricingSettings
 
-from .models import Payment, PaymentSettings
+from .models import Payment, PaymentSettings, SalesEntry
 from .paymongo import PayMongoClient, PayMongoError
 
 log = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ def record_manual_payment(order: Order, actor=None) -> int:
     amount = order.balance_due
     if amount <= 0:
         return 0
-    Payment.objects.create(
+    payment = Payment.objects.create(
         order=order,
         payment_id=f"manual_{order.id}_{timezone.now().strftime('%Y%m%d%H%M%S')}",
         amount=amount,
@@ -155,6 +155,7 @@ def record_manual_payment(order: Order, actor=None) -> int:
         paid_at=timezone.now(),
         raw_response={"recorded_by": getattr(actor, "email", "") or "staff"},
     )
+    SalesEntry.record_payment(payment)
     old_status = order.status
     order.amount_paid = min(order.subtotal, order.amount_paid + amount)
     if not order.payment_method:
@@ -193,6 +194,10 @@ def mark_payment_paid(payment: Payment, paymongo_payment_id: str = "") -> None:
         note = "Payment received" if balance == 0 else f"Down payment received; balance due {balance / 100:.2f} PHP"
         order.set_status(Order.Status.PENDING_REVIEW, note=note)
 
+    # The ledger row is written here — the single point where a QR payment
+    # becomes real money — so sales survive any later Order/Payment delete.
+    SalesEntry.record_payment(payment)
+
 
 def mark_payment_failed(payment: Payment, status_value: str) -> None:
     payment.status = Payment.Status.FAILED if status_value == "payment.failed" else Payment.Status.EXPIRED
@@ -212,6 +217,9 @@ def refund_payment(payment: Payment, reason: str = "requested_by_customer") -> b
     payment.refund_status = result.get("status", "processing")
     payment.status = Payment.Status.REFUNDED
     payment.save(update_fields=["refund_status", "status", "updated_at"])
+    # Refund nets the original entry out of sales while staying traceable
+    # (the refund row itself survives an order deletion — see SalesEntry).
+    SalesEntry.record_refund(payment, reason=reason)
     return True
 
 

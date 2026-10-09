@@ -346,6 +346,60 @@ export interface CheckoutResponse {
   order?: Order;
 }
 
+/** One row of the append-only sales ledger (GET /payments/sales/). */
+export interface SalesEntry {
+  id: number;
+  kind: "payment" | "refund";
+  /** Centavos; always positive. `kind` carries the sign (+payment / −refund). */
+  amount: number;
+  amount_peso: number;
+  method: string;
+  /** Snapshotted tracking id — survives even if the order is later deleted. */
+  tracking_id: string;
+  /** Null once the linked order has been hard-deleted (SET_NULL). */
+  order_id: number | null;
+  reason: string;
+  occurred_at: string;
+}
+
+/** Net totals for a single payment method over the selected range. */
+export interface SalesMethodTotal {
+  method: string;
+  /** Centavos. */
+  gross: number;
+  refunds: number;
+  net: number;
+  count: number;
+}
+
+/** One day of the daily series (zero-filled for days with no sales). */
+export interface SalesDailyPoint {
+  date: string;
+  /** Centavos. */
+  gross: number;
+  refunds: number;
+  net: number;
+}
+
+/** Shop-admin sales overview, read from the append-only SalesEntry ledger. */
+export interface SalesDashboard {
+  /** Inclusive query window, YYYY-MM-DD. */
+  from: string;
+  to: string;
+  /** Centavos — the raw amount the ledger keeps; divide by 100 for pesos. */
+  gross: number;
+  refunds: number;
+  net: number;
+  payment_count: number;
+  refund_count: number;
+  /** Distinct orders that paid in this window. */
+  paid_orders: number;
+  methods: SalesMethodTotal[];
+  daily: SalesDailyPoint[];
+  /** Latest ledger rows for the window. */
+  recent: SalesEntry[];
+}
+
 export interface CustomerOption {
   id: number;
   email: string;

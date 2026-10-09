@@ -54,3 +54,90 @@ class PaymentSettings(models.Model):
     def get_solo(cls) -> "PaymentSettings":
         settings_obj, _ = cls.objects.get_or_create(pk=1)
         return settings_obj
+
+
+class SalesEntry(models.Model):
+    """Append-only sales ledger — the shop's book of record.
+
+    Rows are written the moment money moves (QR payment confirmed, cash
+    recorded, refund issued) and are **never deleted**: the sales
+    dashboard reads this table instead of Order/Payment, so hard-deleting
+    an order cannot erase revenue from the books. ``order``/``payment``
+    use SET_NULL and ``tracking_id``/``method`` are snapshotted, so a
+    deleted order leaves a traceable entry behind instead of a hole.
+
+    Refunds append their own entry, so net sales (payments − refunds)
+    always equals what the shop actually kept: deleting a paid order
+    refunds it first, which nets it out of sales without losing the
+    audit trail.
+
+    ``kind`` decides the sign — payment = +, refund = − (amount stays
+    positive centavos on the row itself).
+    """
+
+    class Kind(models.TextChoices):
+        PAYMENT = "payment", "Payment"
+        REFUND = "refund", "Refund"
+
+    payment = models.ForeignKey(
+        Payment, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="sales_entries",
+    )
+    order = models.ForeignKey(
+        Order, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="sales_entries",
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    amount = models.PositiveIntegerField(
+        help_text="Centavos; kind decides the sign (+payment / −refund).")
+    method = models.CharField(max_length=16, default="qrph")       # snapshot
+    tracking_id = models.CharField(max_length=20, db_index=True)   # snapshot
+    reason = models.CharField(max_length=64, blank=True)           # refund reason / recorder
+    occurred_at = models.DateTimeField(db_index=True)              # paid_at / refund time
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-occurred_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["payment", "kind"],
+                name="unique_sales_entry_per_payment_and_kind",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        sign = "+" if self.kind == self.Kind.PAYMENT else "-"
+        return f"{self.kind} {sign}{self.amount / 100:.2f} PHP ({self.tracking_id})"
+
+    @property
+    def amount_peso(self) -> float:
+        return self.amount / 100
+
+    @property
+    def signed_amount(self) -> int:
+        return self.amount if self.kind == self.Kind.PAYMENT else -self.amount
+
+    @classmethod
+    def record_payment(cls, payment: Payment) -> "SalesEntry | None":
+        """Ledger one confirmed payment. Idempotent for webhook retries."""
+        if cls.objects.filter(payment=payment, kind=cls.Kind.PAYMENT).exists():
+            return None
+        return cls.objects.create(
+            payment=payment, order=payment.order, kind=cls.Kind.PAYMENT,
+            amount=payment.amount, method=payment.method,
+            tracking_id=payment.order.tracking_id,
+            reason=((payment.raw_response or {}).get("recorded_by") or "")[:64],
+            occurred_at=payment.paid_at or timezone.now(),
+        )
+
+    @classmethod
+    def record_refund(cls, payment: Payment, reason: str = "") -> "SalesEntry | None":
+        """Ledger a completed refund (mirrors record_payment)."""
+        if cls.objects.filter(payment=payment, kind=cls.Kind.REFUND).exists():
+            return None
+        return cls.objects.create(
+            payment=payment, order=payment.order, kind=cls.Kind.REFUND,
+            amount=payment.amount, method=payment.method,
+            tracking_id=payment.order.tracking_id,
+            reason=(reason or "")[:64], occurred_at=timezone.now(),
+        )

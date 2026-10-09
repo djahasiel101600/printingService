@@ -20,6 +20,7 @@ urlpatterns = [
     path("api/", include("apps.orders.urls")),
     path("api/", include("apps.payments.urls")),
     path("api/", include("apps.printing.urls")),
+    path("api/", include("apps.activitylog.urls")),
     # PayMongo webhook alias. The canonical endpoint is /api/payments/webhook/;
     # this also accepts the short /webhook path some dashboards are configured
     # with (nginx forwards it here — see frontend/nginx.conf).

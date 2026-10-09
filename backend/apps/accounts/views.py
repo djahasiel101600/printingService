@@ -188,6 +188,13 @@ class AdminStaffDetailView(APIView):
         serializer = StaffMemberWriteSerializer(target, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        action = "staff.demote" if demoting else "staff.deactivate"
+        log_activity(
+            request.user, action, object_type="user",
+            object_repr=user.email, object_id=user.pk,
+            detail=(f"Role changed {target.role} to {user.role}."
+                    if demoting else "Account deactivated."),
+        )
         return Response(StaffMemberSerializer(user).data)
 
     def delete(self, request, pk):
@@ -198,4 +205,9 @@ class AdminStaffDetailView(APIView):
             return Response({"detail": "At least one active admin account is required."}, status=400)
         target.is_active = False
         target.save(update_fields=["is_active"])
+        log_activity(
+            request.user, "staff.deactivate", object_type="user",
+            object_repr=target.email, object_id=target.pk,
+            detail="Account deactivated (order history kept).",
+        )
         return Response(StaffMemberSerializer(target).data)

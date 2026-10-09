@@ -14,6 +14,7 @@ import {
   Info,
   Loader2,
   LogIn,
+  Printer,
   QrCode,
   Wallet,
   X,
@@ -38,6 +39,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import FilePreviewDialog from "@/components/FilePreviewDialog";
+import OrderReceiptDialog from "@/components/OrderReceiptDialog";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, loadGuestOrders } from "@/lib/api";
 import type {
@@ -89,6 +91,7 @@ export default function OrderDetailPage() {
   const [qrResult, setQrResult] = useState<CheckoutResponse | null>(null);
   const [previewFile, setPreviewFile] = useState<OrderFile | null>(null);
   const [reuploadFile, setReuploadFile] = useState<OrderFile | null>(null);
+  const [showReceipt, setShowReceipt] = useState(false);
   const reuploadInput = useRef<HTMLInputElement>(null);
 
   // Orders placed without an account are proven by their tracking ID, which
@@ -553,6 +556,19 @@ export default function OrderDetailPage() {
                   — {peso(order.subtotal_peso)}
                 </Button>
               )}
+
+              {/* Receipt is available as soon as there's money on the order —
+                  even before it's paid, so the customer can print a quote. */}
+              {order.amount_paid_peso > 0 && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowReceipt(true)}
+                >
+                  <Printer className="mr-2 h-4 w-4" aria-hidden="true" /> View
+                  receipt
+                </Button>
+              )}
             </CardContent>
           </Card>
         </aside>
@@ -953,6 +969,12 @@ export default function OrderDetailPage() {
         orderId={Number(id)}
         trackingId={guestRef?.tracking_id}
         onClose={() => setPreviewFile(null)}
+      />
+
+      <OrderReceiptDialog
+        order={order}
+        open={showReceipt}
+        onClose={() => setShowReceipt(false)}
       />
     </div>
   );

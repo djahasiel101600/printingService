@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  BarChart3,
   ChevronDown,
   ClipboardCheck,
   ClipboardList,
@@ -79,6 +80,12 @@ const STAFF_NAV: NavItem[] = [
     to: "/admin/pricing",
     label: "Pricing",
     icon: Tags,
+    show: (u) => !!u?.is_shop_admin,
+  },
+  {
+    to: "/admin/sales",
+    label: "Sales",
+    icon: BarChart3,
     show: (u) => !!u?.is_shop_admin,
   },
   {

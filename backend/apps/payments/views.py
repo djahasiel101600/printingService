@@ -1,9 +1,11 @@
 import hmac
 import hashlib
 import logging
+from datetime import datetime, timedelta
 
 import requests
 from django.conf import settings
+from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import permissions, serializers
@@ -15,7 +17,7 @@ from apps.orders.serializers import OrderSerializer
 
 from apps.pricing.views import IsShopAdmin
 
-from .models import Payment, PaymentSettings
+from .models import Payment, PaymentSettings, SalesEntry
 from .paymongo import PayMongoClient, PayMongoError
 from . import services
 
@@ -277,3 +279,105 @@ def _signature_valid(body: bytes, signature_header: str, secret: str) -> bool:
         if received and hmac.compare_digest(expected, received):
             return True
     return False
+
+
+class SalesEntrySerializer(serializers.ModelSerializer):
+    amount_peso = serializers.SerializerMethodField()
+    # order_id survives as null after the order itself was deleted — the
+    # tracking_id snapshot keeps the row traceable either way.
+    order_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = SalesEntry
+        fields = ["id", "kind", "amount", "amount_peso", "method",
+                  "tracking_id", "order_id", "reason", "occurred_at"]
+        read_only_fields = fields
+
+    def get_amount_peso(self, obj) -> float:
+        return obj.amount / 100
+
+
+class SalesDashboardView(APIView):
+    """Shop-admin sales overview, read from the append-only SalesEntry ledger.
+
+    Reading the ledger instead of Order/Payment is deliberate: deleting an
+    order cascades its Payment rows away, but ledger rows survive (SET_NULL
+    + tracking-id snapshot), so the books always match the money that
+    actually moved. Refunds net off through their own entries, so a deleted
+    paid order — which is refunded first — leaves the net correct *and*
+    traceable.
+
+    Query params: ``from``/``to`` as YYYY-MM-DD (defaults: last 30 days,
+    inclusive, capped at 366 days).
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def get(self, request):
+        today = timezone.localdate()
+        raw_from = (request.query_params.get("from") or "").strip()
+        raw_to = (request.query_params.get("to") or "").strip()
+        try:
+            date_from = (datetime.strptime(raw_from, "%Y-%m-%d").date()
+                         if raw_from else today - timedelta(days=29))
+            date_to = (datetime.strptime(raw_to, "%Y-%m-%d").date()
+                       if raw_to else today)
+        except ValueError:
+            return Response({"detail": "Dates must be formatted YYYY-MM-DD."}, status=400)
+        if date_from > date_to:
+            return Response({"detail": "'from' must not be after 'to'."}, status=400)
+        if (date_to - date_from).days > 366:
+            return Response({"detail": "Range is limited to 366 days."}, status=400)
+
+        entries = SalesEntry.objects.filter(
+            occurred_at__date__gte=date_from, occurred_at__date__lte=date_to)
+        paid = entries.filter(kind=SalesEntry.Kind.PAYMENT)
+        refunded = entries.filter(kind=SalesEntry.Kind.REFUND)
+        gross = paid.aggregate(total=Sum("amount"))["total"] or 0
+        refunds = refunded.aggregate(total=Sum("amount"))["total"] or 0
+
+        methods = [
+            {**row,
+             "gross": row["gross"] or 0,
+             "refunds": row["refunds"] or 0,
+             "net": (row["gross"] or 0) - (row["refunds"] or 0)}
+            for row in entries.values("method").annotate(
+                gross=Sum("amount", filter=Q(kind=SalesEntry.Kind.PAYMENT)),
+                refunds=Sum("amount", filter=Q(kind=SalesEntry.Kind.REFUND)),
+                count=Count("id", filter=Q(kind=SalesEntry.Kind.PAYMENT)),
+            ).order_by("-gross")
+        ]
+
+        pay_daily = {
+            row["occurred_at__date"]: row["total"]
+            for row in paid.values("occurred_at__date").annotate(total=Sum("amount"))
+        }
+        ref_daily = {
+            row["occurred_at__date"]: row["total"]
+            for row in refunded.values("occurred_at__date").annotate(total=Sum("amount"))
+        }
+        daily = []
+        for offset in range((date_to - date_from).days + 1):
+            day = date_from + timedelta(days=offset)
+            day_gross = int(pay_daily.get(day, 0) or 0)
+            day_refunds = int(ref_daily.get(day, 0) or 0)
+            daily.append({
+                "date": day.isoformat(),
+                "gross": day_gross,
+                "refunds": day_refunds,
+                "net": day_gross - day_refunds,
+            })
+
+        return Response({
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "gross": gross,
+            "refunds": refunds,
+            "net": gross - refunds,
+            "payment_count": paid.count(),
+            "refund_count": refunded.count(),
+            "paid_orders": paid.values("tracking_id").distinct().count(),
+            "methods": methods,
+            "daily": daily,
+            "recent": SalesEntrySerializer(entries[:15], many=True).data,
+        })

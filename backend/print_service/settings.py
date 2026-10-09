@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.orders",
     "apps.payments",
     "apps.printing",
+    "apps.activitylog",
 ]
 
 MIDDLEWARE = [

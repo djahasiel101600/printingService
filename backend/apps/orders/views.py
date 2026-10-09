@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.pricing.models import PricingSettings
 from apps.pricing.quotation import compute_quote
 from apps.pricing.views import IsShopAdmin, IsShopStaff
+from apps.activitylog.services import log_activity
 from apps.printing.models import PrintJob
 from apps.printing.services import (
     printable_files, submit_order_to_printer, sync_print_jobs, unprintable_files,
@@ -657,13 +658,25 @@ class AdminOrderActionView(APIView):
         note = request.data.get("note", "") or request.data.get("reason", "")
         from apps.payments.services import refund_order
 
-        # Money handling and cancelling stay with the shop owner: an approver
-        # works the print queue, not the till (see User.can_review_orders).
+        # Shop-driven money actions (cancel, payment record, refund on
+        # reject) stay with the admin: an approver works the print queue,
+        # not the till (see User.can_review_orders).
         if action in ("cancel", "record_payment") and not request.user.is_shop_admin:
             return Response(
                 {"detail": f"Only a shop admin can {action.replace('_', ' ')} an order."},
                 status=403,
             )
+
+        log_activity(
+            request.user, f"order.{action}", object_type="order",
+            object_repr=order.tracking_id, object_id=order.pk,
+            detail=(f"Action: {action}. "
+                    f"Subtotal {order.subtotal / 100:.2f} PHP; "
+                    f"{order.amount_paid / 100:.2f} PHP paid; "
+                    f"refunded {order.refunded_amount / 100:.2f} PHP."
+                    if action in ("cancel", "record_payment", "reject")
+                    else ""),
+        )
 
         if action == "approve":
             # Bake the fit onto the paper's printable area (and the page
@@ -957,6 +970,9 @@ class AdminOrderSpecView(APIView):
                 return Response({"detail": str(exc)}, status=400)
         order.subtotal = compute_quote(order.quote_specs()).subtotal
         order.save(update_fields=["subtotal"])
+        log_activity(request.user, "order.spec", object_type="order",
+                     object_repr=order.tracking_id, object_id=order.pk,
+                     detail=f"File spec updated: {spec.meta.get('file_name', 'file')}.")
         return Response(AdminOrderSerializer(order).data)
 
 
@@ -969,6 +985,8 @@ class AdminOrderNotesView(APIView):
         order = get_object_or_404(Order, pk=pk)
         order.admin_notes = request.data.get("admin_notes", "")
         order.save(update_fields=["admin_notes"])
+        log_activity(request.user, "order.notes", object_type="order",
+                     object_repr=order.tracking_id, object_id=order.pk)
         return Response(AdminOrderSerializer(order).data)
 
 
@@ -1012,6 +1030,9 @@ class AdminOrderFilePagesView(APIView):
         order.refresh_from_db()
         order.subtotal = compute_quote(order.quote_specs()).subtotal
         order.save(update_fields=["subtotal"])
+        log_activity(request.user, "order.pages", object_type="order",
+                     object_repr=order.tracking_id, object_id=order.pk,
+                     detail=f"Page selection: {order_file.page_selection_label}")
         return Response({
             "order": AdminOrderSerializer(order).data,
             "selected_pages": selected,
@@ -1088,6 +1109,10 @@ class AdminOrderFileReplaceView(APIView):
             note=f"Shop replaced '{order_file.file_name}' with a converted PDF",
             actor=request.user,
         )
+        log_activity(request.user, "order.replace", object_type="order",
+                     object_repr=order.tracking_id, object_id=order.pk,
+                     detail=f"File replaced: {order_file.file_name} "
+                            f"({order_file.page_count} pages).")
         return Response(AdminOrderSerializer(order).data)
 
 
@@ -1103,4 +1128,7 @@ class AdminResubmitView(APIView):
             return Response({"detail": "No failed print jobs to resubmit."}, status=409)
         failed.delete()
         submit_order_to_printer(order)
+        log_activity(request.user, "order.resubmit", object_type="order",
+                     object_repr=order.tracking_id, object_id=order.pk,
+                     detail=f"Re-submitted {failed.count()} failed print job(s).")
         return Response(AdminOrderSerializer(order).data)

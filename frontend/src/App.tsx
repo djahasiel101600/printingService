@@ -19,6 +19,7 @@ import AdminOrderDetailPage from "@/pages/AdminOrderDetailPage";
 import AdminSettingsPage from "@/pages/AdminSettingsPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminPricingPage from "@/pages/AdminPricingPage";
+import AdminSalesPage from "@/pages/AdminSalesPage";
 import QuickPrintPage from "@/pages/QuickPrintPage";
 import HomePage from "@/pages/HomePage";
 
@@ -68,6 +69,15 @@ export default function App() {
                 element={
                   <RequireAuth adminOnly>
                     <AdminPricingPage />
+                  </RequireAuth>
+                }
+              />
+              {/* Sales dashboard: owner-only — reads the append-only ledger. */}
+              <Route
+                path="/admin/sales"
+                element={
+                  <RequireAuth adminOnly>
+                    <AdminSalesPage />
                   </RequireAuth>
                 }
               />
