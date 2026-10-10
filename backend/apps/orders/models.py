@@ -96,6 +96,20 @@ class Order(models.Model):
         return self.amount_paid >= self.subtotal and self.subtotal > 0
 
     @property
+    def refunded_amount(self) -> int:
+        """Total centavos refunded back to the customer across this order.
+
+        Derived from the order's own payments (``status == "refunded"``) so it
+        needs no extra column. The reverse ``payments`` relation comes from
+        ``Payment.order``; the status string is matched literally to avoid
+        importing the Payment model here, which imports ``Order`` (circular).
+        """
+        return sum(
+            payment.amount
+            for payment in self.payments.filter(status="refunded")
+        )
+
+    @property
     def client_display_name(self) -> str:
         if self.user:
             return self.user.get_full_name() or self.user.email

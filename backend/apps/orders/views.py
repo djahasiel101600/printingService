@@ -972,7 +972,8 @@ class AdminOrderSpecView(APIView):
         order.save(update_fields=["subtotal"])
         log_activity(request.user, "order.spec", object_type="order",
                      object_repr=order.tracking_id, object_id=order.pk,
-                     detail=f"File spec updated: {spec.meta.get('file_name', 'file')}.")
+                     detail=f"File spec updated: "
+                            f"{spec.order_file.file_name if spec.order_file else 'order'}.")
         return Response(AdminOrderSerializer(order).data)
 
 

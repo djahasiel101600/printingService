@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from apps.activitylog.services import log_activity
 from apps.pricing.views import IsShopAdmin
 
 from .serializers import (
