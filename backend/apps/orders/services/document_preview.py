@@ -87,25 +87,6 @@ def _heading_level(style: str) -> int:
     return min(6, max(1, int(match.group(1)))) if match else 2
 
 
-def _blocks(pairs: list[tuple[str, str]]) -> tuple[list[dict], bool]:
-    """Turn (style, text) pairs into blocks, honouring the output limits."""
-    blocks: list[dict] = []
-    budget = MAX_CHARS
-    for style, text in pairs:
-        text = re.sub(r"[ \t\u00a0]+", " ", text).strip()
-        if not text:
-            continue
-        blocks.append({
-            "type": "heading" if style.startswith("Heading") else "paragraph",
-            "level": _heading_level(style),
-            "text": text[:budget],
-        })
-        budget -= len(text)
-        if budget <= 0 or len(blocks) >= MAX_BLOCKS:
-            return blocks, True
-    return blocks, False
-
-
 def _node_text(node) -> str:
     return "".join(node.itertext()).strip() if node is not None else ""
 
@@ -113,24 +94,52 @@ def _node_text(node) -> str:
 # --------------------------------------------------------------------- Word
 def _read_docx(content: bytes) -> DocumentPreview:
     """Walk the body in document order so headings, paragraphs and tables keep
-    their original sequence (iterating every <w:p> would repeat table cells)."""
+    their original sequence (iterating every <w:p> would repeat table cells).
+
+    Tables become real ``table`` blocks (not flattened text) so they render as
+    grids on screen and on paper, matching how spreadsheets are handled."""
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         root = _safe_xml(archive, "word/document.xml")
         if root is None:
             raise PreviewError("This .docx looks corrupted or password protected.")
         body = root.find(f"{_W}body")
-        pairs: list[tuple[str, str]] = []
+        blocks: list[dict] = []
+        truncated = False
+        budget = MAX_CHARS
         for element in (body if body is not None else root):
             if element.tag == f"{_W}p":
                 style_node = element.find(f"{_W}pPr/{_W}pStyle")
                 style = (style_node.get(f"{_W}val", "") or "") if style_node is not None else ""
-                pairs.append((style, "".join(element.itertext())))
+                text = re.sub(r"[ \t\u00a0]+", " ", "".join(element.itertext())).strip()
+                if not text:
+                    continue
+                blocks.append({
+                    "type": "heading" if style.startswith("Heading") else "paragraph",
+                    "level": _heading_level(style),
+                    "text": text[:budget],
+                })
+                budget -= len(text)
             elif element.tag == f"{_W}tbl":
+                rows: list[list[str]] = []
                 for row in element.iter(f"{_W}tr"):
-                    cells = [_node_text(cell) for cell in row.findall(f"{_W}tc")]
+                    if len(rows) >= MAX_TABLE_ROWS:
+                        truncated = True
+                        break
+                    cells = [_node_text(cell)[:MAX_CHARS] for cell in row.findall(f"{_W}tc")]
+                    cells = cells[:MAX_TABLE_COLS]
                     if any(cells):
-                        pairs.append(("Table", "  |  ".join(cells)))
-    blocks, truncated = _blocks(pairs)
+                        rows.append(cells)
+                        # Tables count against the same char budget as paragraphs —
+                        # otherwise a document of pure tables could bypass the
+                        # output limit entirely.
+                        budget -= sum(len(cell) for cell in cells)
+                if rows:
+                    blocks.append({"type": "table", "label": "Table", "rows": rows})
+            if budget <= 0 or len(blocks) >= MAX_BLOCKS:
+                truncated = True
+                break
+    if not blocks:
+        raise PreviewError("This document has no readable text.")
     return DocumentPreview("document", "docx", blocks, truncated)
 
 

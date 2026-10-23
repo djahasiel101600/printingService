@@ -267,7 +267,7 @@ def rebuild_print_file(order_file) -> bool:
 
 
 def render_document(order_file) -> int:
-    """Render an Office/text upload into a printable PDF of text pages.
+    """Render an Office/text upload into a printable PDF of laid-out pages.
 
     Stores the result as ``edited_file`` (the print source) and refreshes the
     page count so the admin's page picker works on the rendered pagination.
@@ -321,7 +321,7 @@ def prepare_order_for_print(order, order_files=None) -> list:
 
 
 def page_count_for(file_type: str, content: bytes, file_name: str = "", media_size: str = "ps_a4") -> int:
-    """Page count for an upload: real pages for PDFs, text pages for documents."""
+    """Page count for an upload: real pages for PDFs, laid-out pages for documents."""
     if file_type == "pdf":
         return count_pages("pdf", content)
     if file_type == "document":

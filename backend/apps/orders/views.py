@@ -169,7 +169,7 @@ class OrderCreateView(APIView):
                              if index < len(per_file) and isinstance(per_file[index], dict) else {})
             media_size = per_file_spec.get("media_size") or spec_defaults.get("media_size") or "ps_a4"
             try:
-                # Documents are counted as the text pages the shop would
+                # Documents are counted as the laid-out pages the shop would
                 # actually print (services/document_render.py), so page
                 # selection and pricing work on real page numbers.
                 order_file.page_count = page_count_for(file_type, content, uploaded.name, media_size)
@@ -280,7 +280,7 @@ class OrderEstimateView(APIView):
             uploaded.seek(0)
             content = uploaded.read()
             try:
-                # Documents are measured as the text pages the shop would
+                # Documents are measured as the laid-out pages the shop would
                 # render for printing (A4 layout: this endpoint receives no
                 # spec yet, only the files).
                 page_count = page_count_for(file_type.value, content, uploaded.name)

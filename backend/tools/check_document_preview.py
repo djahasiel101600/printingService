@@ -38,13 +38,13 @@ def check_docx():
 </w:tbl></w:body></w:document>"""
     preview = dp.build_preview("report.docx", zipped({"word/document.xml": document}))
     assert preview.kind == "document", preview.kind
-    texts = [b["text"] for b in preview.blocks]
-    assert texts[0] == "Quarterly Report", texts
     assert preview.blocks[0]["type"] == "heading", preview.blocks[0]
-    assert "Revenue grew by 12 percent." in texts, texts
-    assert "Item | Cost" in texts, texts            # table row, joined once
-    assert "Ink | 450" in texts, texts
-    print("  docx  ->", preview.kind, texts)
+    assert preview.blocks[0]["text"] == "Quarterly Report", preview.blocks
+    assert preview.blocks[1]["type"] == "paragraph", preview.blocks[1]
+    assert "Revenue grew by 12 percent." in preview.blocks[1]["text"], preview.blocks
+    table = next(b for b in preview.blocks if b["type"] == "table")
+    assert table["rows"] == [["Item", "Cost"], ["Ink", "450"]], table
+    print("  docx  ->", preview.kind, [b.get("text", b.get("rows")) for b in preview.blocks])
 
 
 def check_xlsx():
