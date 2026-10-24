@@ -41,6 +41,7 @@ import { formatBytes } from "@/lib/constants";
 import type {
   Capabilities,
   CustomerOption,
+  EstimateResponse,
   Order,
   PrintSpecification,
   Quote,
@@ -283,6 +284,74 @@ export default function NewOrderPage({
     enabled:
       adminMode && debouncedSearch.trim().length >= 1 && !selectedCustomer,
   });
+
+  // -------------------------------------------------- live quote (pre-order)
+  // Page-count estimate: call the estimate endpoint whenever files change so
+  // the quote uses real page counts instead of guesses (PRD FR-16).
+  const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
+
+  const estimateMutation = useMutation({
+    mutationFn: async () => {
+      const formData = new FormData();
+      files.forEach((f) => formData.append("files", f));
+      const { data } = await api.post<EstimateResponse>("/orders/estimate/", formData);
+      return data;
+    },
+    onSuccess: (data) => setEstimate(data),
+    onError: () => setEstimate(null),
+  });
+
+  // Re-estimate whenever the file list changes.
+  useEffect(() => {
+    if (files.length === 0) {
+      setEstimate(null);
+      return;
+    }
+    estimateMutation.mutate();
+  }, [files]);
+
+  // Debounced quote input: spec + real page counts from the estimate.
+  interface QuoteInput {
+    spec: PrintSpecification;
+    pageCounts: number[];
+    labels: string[];
+  }
+  const [quoteInput, setQuoteInput] = useState<QuoteInput | null>(null);
+  useEffect(() => {
+    if (!estimate) {
+      setQuoteInput(null);
+      return;
+    }
+    const next: QuoteInput = {
+      spec,
+      pageCounts: estimate.files.map((f) => f.page_count),
+      labels: estimate.files.map((f) => f.name),
+    };
+    const timer = setTimeout(() => setQuoteInput(next), 350);
+    return () => clearTimeout(timer);
+  }, [estimate, spec]);
+
+  const quoteQuery = useQuery({
+    queryKey: ["new-order-quote", quoteInput],
+    enabled: quoteInput !== null && files.length > 0,
+    queryFn: async () => {
+      if (!quoteInput) return null;
+      const specs = quoteInput.pageCounts.map((page_count, index) => ({
+        page_count,
+        label: quoteInput.labels[index] ?? `File ${index + 1}`,
+        media_size: quoteInput.spec.media_size,
+        media_type: quoteInput.spec.media_type,
+        color_mode: quoteInput.spec.color_mode,
+        print_quality: quoteInput.spec.print_quality,
+        sides: quoteInput.spec.sides,
+        copies: quoteInput.spec.copies,
+      }));
+      const { data } = await api.post<Quote>("/orders/quote/", { files: specs });
+      return data;
+    },
+    retry: false,
+  });
+  const quote = quoteQuery.data;
 
   const submitMutation = useMutation({
     mutationFn: async () => {
@@ -861,6 +930,38 @@ export default function NewOrderPage({
                 {missing.length > 0 && (
                   <p className="text-sm text-muted-foreground">
                     Still needed: {missing.join(" and ")}.
+                  </p>
+                )}
+
+                {/* Live estimated total before the order is placed (PRD FR-16). */}
+                {quoteQuery.isFetching ? (
+                  <p className="text-sm text-muted-foreground">Updating price…</p>
+                ) : quote ? (
+                  <div className="rounded-lg border bg-card px-4 py-3 shadow-sm space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Estimated total</p>
+                        <p className="text-2xl font-bold">
+                          ₱{quote.subtotal_peso.toFixed(2)}
+                        </p>
+                      </div>
+                      <p className="text-right text-xs text-muted-foreground">
+                        {estimate?.total_pages ?? 0} page{"s"} ×{" "}
+                        {spec.copies} cop{"ies"}
+                        <br />
+                        {spec.color_mode === "color" ? "Color" : "Black & white"} ·
+                        {spec.sides === "none" ? "single-sided" : "double-sided"}
+                      </p>
+                    </div>
+                    {quote.min_partial_peso < quote.subtotal_peso && (
+                      <p className="text-xs text-muted-foreground">
+                        Minimum down payment: ₱{quote.min_partial_peso.toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    The price appears here once files and print options are set.
                   </p>
                 )}
 

@@ -1,4 +1,5 @@
 import json
+import math
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -61,7 +62,7 @@ def _quote_response(quote) -> dict:
         "lines": _quote_lines(quote),
         "subtotal": quote.subtotal,
         "subtotal_peso": quote.subtotal_peso,
-        "min_partial_peso": (quote.subtotal * min_partial_percent // 100) / 100,
+        "min_partial_peso": math.ceil(quote.subtotal * min_partial_percent / 100) / 100,
     }
 
 

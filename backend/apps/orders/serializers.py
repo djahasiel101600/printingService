@@ -1,3 +1,5 @@
+import math
+
 from rest_framework import serializers
 
 from apps.printing.constants import (
@@ -153,7 +155,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_min_partial_peso(self, obj) -> float:
         """Smallest allowed down payment (matches payments.services.create_checkout)."""
-        return (obj.subtotal * PricingSettings.get_solo().min_partial_percent // 100) / 100
+        return math.ceil(obj.subtotal * PricingSettings.get_solo().min_partial_percent / 100) / 100
 
     def get_amount_paid_peso(self, obj) -> float:
         return obj.amount_paid / 100
