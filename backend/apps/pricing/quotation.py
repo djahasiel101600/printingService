@@ -9,10 +9,13 @@ centavos. Pricing model:
 * double-sided printing earns the configured discount factor
   (PricingSettings.duplex_discount_factor, default 0.90) because it saves
   paper;
-* rules are matched exactly first, then relaxed (quality -> type -> size)
-  with "any" wildcards, so quoting never fails outright.
+* rules use ``"any"`` as a wildcard on any field; the most specific match
+  (most exact fields) wins, falling back to the most recently effective
+  rule, so quoting never fails outright.
 """
 from dataclasses import dataclass
+
+from django.db import models
 
 from .models import PriceRule, PricingSettings
 
@@ -37,31 +40,49 @@ class Quote:
         return self.subtotal / 100
 
 
-def _rule_queryset(**match):
-    kwargs = {field: value for field, value in match.items() if value != "any"}
-    kwargs.update({field: "any" for field, value in match.items() if value == "any"})
-    return PriceRule.objects.filter(is_active=True, **kwargs).order_by("-effective_date")
-
-
 def find_rule(media_size: str, media_type: str, color_mode: str, print_quality: str) -> PriceRule | None:
-    """Exact match first, then relaxed lookups (quality -> type -> size)."""
-    matches = [
-        {"media_size": media_size, "media_type": media_type,
-         "color_mode": color_mode, "print_quality": print_quality},
-        {"media_size": media_size, "media_type": media_type,
-         "color_mode": color_mode, "print_quality": "any"},
-        {"media_size": media_size, "media_type": "any",
-         "color_mode": color_mode, "print_quality": "any"},
-        {"media_size": "any", "media_type": "any",
-         "color_mode": color_mode, "print_quality": "any"},
-        {"media_size": "any", "media_type": "any",
-         "color_mode": "any", "print_quality": "any"},
-    ]
-    for match in matches:
-        rule = _rule_queryset(**match).first()
-        if rule:
-            return rule
-    return None
+    """Find the most specific matching price rule.
+
+    Each field matches either exactly or via the ``"any"`` wildcard, so a rule
+    like ``media_size="any"`` with ``print_quality="normal"`` is found when
+    looking up a mono/normal job on any paper size. More specific matches
+    (more exact fields) take precedence over wildcard matches; among equally
+    specific matches the most recently effective rule wins.
+    """
+    rules = PriceRule.objects.filter(
+        models.Q(media_size=media_size) | models.Q(media_size="any"),
+        models.Q(media_type=media_type) | models.Q(media_type="any"),
+        models.Q(color_mode=color_mode) | models.Q(color_mode="any"),
+        models.Q(print_quality=print_quality) | models.Q(print_quality="any"),
+        is_active=True,
+    )
+
+    rules = rules.annotate(
+        specificity=(
+            models.Case(
+                models.When(media_size=media_size, then=1),
+                default=0,
+                output_field=models.IntegerField(),
+            )
+            + models.Case(
+                models.When(media_type=media_type, then=1),
+                default=0,
+                output_field=models.IntegerField(),
+            )
+            + models.Case(
+                models.When(color_mode=color_mode, then=1),
+                default=0,
+                output_field=models.IntegerField(),
+            )
+            + models.Case(
+                models.When(print_quality=print_quality, then=1),
+                default=0,
+                output_field=models.IntegerField(),
+            )
+        )
+    ).order_by("-specificity", "-effective_date", "id")
+
+    return rules.first()
 
 
 
