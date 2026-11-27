@@ -1,6 +1,14 @@
 # Node dependencies
 node_modules/
 
+# Python dependencies and virtual environments
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Environment variables
 .env
 .env.*
