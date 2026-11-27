@@ -51,9 +51,7 @@ const SHOP = {
   // One-line form for the map search.
   fullAddress: "Dela Pena's Store, Purok 1, Santa Ana, Tubay, Agusan del Norte",
 };
-const SHOP_MAP_URL = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-  SHOP.fullAddress,
-)}`;
+const SHOP_MAP_URL = `https://www.google.com/maps/@9.1943064,125.5627068,37a,75y,185.96h,65.01t/data=!3m7!1e1!3m5!1sb311B1FXQSsrlAxj3s8AVQ!2e0!6shttps:%2F%2Fstreetviewpixels-pa.clients6.google.com%2Fv1%2Fthumbnail%3Fcb_client%3Dmaps_sv.tactile%26w%3D900%26h%3D600%26pitch%3D24.989055609572674%26panoid%3Db311B1FXQSsrlAxj3s8AVQ%26yaw%3D185.9583605236215!7i16384!8i8192?entry=ttu&g_ep=EgoyMDI2MTEyMy4wIKXMDSoASAFQAw%3D%3D`;
 
 // Product walkthrough clip (hosted by demosmith). Swap this one constant if the
 // video is re-recorded — nothing else on the page depends on it.
