@@ -38,6 +38,10 @@ const ASSURANCES = [
   "Track your order anytime",
 ];
 
+// Product walkthrough clip (hosted by demosmith). Swap this one constant if the
+// video is re-recorded — nothing else on the page depends on it.
+const WALKTHROUGH_EMBED_URL = "https://public.demosmith.ai/b9e7b3a3/embed.html";
+
 export default function HomePage() {
   return (
     <div className="space-y-16 sm:space-y-20">
@@ -82,6 +86,30 @@ export default function HomePage() {
             </li>
           ))}
         </ul>
+      </section>
+
+      {/* ---------------------------------------------------- walkthrough */}
+      <section aria-labelledby="walkthrough-title">
+        <h2 id="walkthrough-title" className="text-2xl font-semibold tracking-tight">
+          See it in action
+        </h2>
+        <p className="mt-1 text-muted-foreground">
+          A short walkthrough — upload your file, we review it, you pay, then
+          collect your prints.
+        </p>
+
+        <div className="mt-6 overflow-hidden rounded-2xl border bg-muted shadow-sm">
+          <div className="aspect-video w-full">
+            <iframe
+              src={WALKTHROUGH_EMBED_URL}
+              title="Walkthrough of the print ordering flow"
+              className="h-full w-full border-0"
+              allow="fullscreen; picture-in-picture"
+              allowFullScreen
+              loading="lazy"
+            />
+          </div>
+        </div>
       </section>
 
       {/* ------------------------------------------------------ how it works */}
