@@ -48,10 +48,22 @@ const SHOP = {
   name: "Dela Pena's Store",
   owner: "Melanie Dela Pena",
   addressLines: ["Purok 1, Santa Ana", "Tubay, Agusan del Norte"],
-  // One-line form for the map search.
-  fullAddress: "Dela Pena's Store, Purok 1, Santa Ana, Tubay, Agusan del Norte",
+  // Pin location, taken from the Google Maps link below.
+  lat: 9.194298,
+  lng: 125.562711,
 };
-const SHOP_MAP_URL = `https://www.google.com/maps/@9.1943064,125.5627068,37a,75y,185.96h,65.01t/data=!3m7!1e1!3m5!1sb311B1FXQSsrlAxj3s8AVQ!2e0!6shttps:%2F%2Fstreetviewpixels-pa.clients6.google.com%2Fv1%2Fthumbnail%3Fcb_client%3Dmaps_sv.tactile%26w%3D900%26h%3D600%26pitch%3D24.989055609572674%26panoid%3Db311B1FXQSsrlAxj3s8AVQ%26yaw%3D185.9583605236215!7i16384!8i8192?entry=ttu&g_ep=EgoyMDI2MTEyMy4wIKXMDSoASAFQAw%3D%3D`;
+// "Open in Maps" button: your hand-picked link.
+const SHOP_MAP_URL = `https://www.google.com/maps/place//@9.1942776,125.5627642,67m/data=!3m1!1e3!4m6!1m5!3m4!2zOcKwMTEnMzkuNSJOIDEyNcKwMzMnNDUuOCJF!8m2!3d9.194298!4d125.562711?entry=ttu&g_ep=EgoyMDI2MTEyMy4wIKXMDSoASAFQAw%3D%3D`;
+// Storefront photo. Put the file in your project's public/images/ folder
+// (it is included next to this file) so this path resolves.
+const SHOP_PHOTO = {
+  src: "/images/dela-pena-store.jpg",
+  width: 1342,
+  height: 700,
+  alt: "Front of the shop: a blue signboard reading Dela Peña Sari Sari Store above a covered entrance with bags and goods on display",
+};
+// Map shown on the page itself (no API key needed). Change z to zoom in/out.
+const SHOP_MAP_EMBED_URL = `https://maps.google.com/maps?q=${SHOP.lat},${SHOP.lng}&z=17&output=embed`;
 
 // Product walkthrough clip (hosted by demosmith). Swap this one constant if the
 // video is re-recorded — nothing else on the page depends on it.
@@ -73,7 +85,7 @@ export default function HomePage() {
         </h1>
         <p className="mt-4 max-w-xl text-base text-muted-foreground sm:text-lg">
           Upload your documents or photos, tell us what you need in plain
-          English, and pay online. We print it and let you know when it's ready.
+          language, and pay online. We print it and let you know when it's ready.
         </p>
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -180,61 +192,94 @@ export default function HomePage() {
           Your prints are made, and picked up, here.
         </p>
 
-        <div className="mt-6 grid gap-6 rounded-2xl border bg-card p-6 shadow-sm sm:grid-cols-[1fr_auto] sm:items-center sm:p-8">
-          <dl className="space-y-5">
-            <div className="flex items-start gap-3">
-              <Store
-                aria-hidden
-                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+        <div className="mt-6 overflow-hidden rounded-2xl border bg-card shadow-sm">
+          <div className="grid md:grid-cols-2 p-2">
+            {/* The real storefront, so people know exactly what to look for. */}
+            <figure className="relative bg-muted md:order-last">
+              <img
+                src={SHOP_PHOTO.src}
+                alt={SHOP_PHOTO.alt}
+                width={SHOP_PHOTO.width}
+                height={SHOP_PHOTO.height}
+                loading="lazy"
+                decoding="async"
+                className="aspect-[4/3] h-full w-full object-cover object-[65%_center] md:aspect-auto md:min-h-[18rem] rounded-t-lg"
               />
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">
-                  Printing shop
-                </dt>
-                <dd className="font-semibold">{SHOP.name}</dd>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <UserRound
-                aria-hidden
-                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
-              />
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">
-                  Owner
-                </dt>
-                <dd className="font-semibold">{SHOP.owner}</dd>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <MapPin
-                aria-hidden
-                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
-              />
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">
-                  Address
-                </dt>
-                <dd>
-                  <address className="not-italic">
-                    {SHOP.addressLines.map((line) => (
-                      <span key={line} className="block font-semibold">
-                        {line}
-                      </span>
-                    ))}
-                  </address>
-                </dd>
-              </div>
-            </div>
-          </dl>
+              <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-4 pb-3 pt-8 text-xs text-white sm:text-sm">
+                Look for the blue signboard that reads &ldquo;Dela Peña Sari
+                Sari Store&rdquo;.
+              </figcaption>
+            </figure>
 
-          <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
-            <a href={SHOP_MAP_URL} target="_blank" rel="noopener noreferrer">
-              <ExternalLink aria-hidden className="mr-2 h-4 w-4" />
-              Open in Maps
-              <span className="sr-only"> (opens in a new tab)</span>
-            </a>
-          </Button>
+            <div className="flex flex-col justify-between gap-6 p-6 sm:p-8">
+              <dl className="space-y-5">
+                <div className="flex items-start gap-3">
+                  <Store
+                    aria-hidden
+                    className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                  />
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">
+                      Printing shop
+                    </dt>
+                    <dd className="font-semibold">{SHOP.name}</dd>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <UserRound
+                    aria-hidden
+                    className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                  />
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">
+                      Owner
+                    </dt>
+                    <dd className="font-semibold">{SHOP.owner}</dd>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <MapPin
+                    aria-hidden
+                    className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                  />
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground">
+                      Address
+                    </dt>
+                    <dd>
+                      <address className="not-italic">
+                        {SHOP.addressLines.map((line) => (
+                          <span key={line} className="block font-semibold">
+                            {line}
+                          </span>
+                        ))}
+                      </address>
+                    </dd>
+                  </div>
+                </div>
+              </dl>
+
+              <Button asChild variant="outline" size="lg" className="w-full sm:w-auto sm:self-start">
+                <a href={SHOP_MAP_URL} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink aria-hidden className="mr-2 h-4 w-4" />
+                  Open in Maps
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
+              </Button>
+            </div>
+          </div>
+
+          {/* Map right on the page: visitors see where the shop is without leaving the site. */}
+          <div className="aspect-[4/3] w-full border-t bg-muted sm:aspect-[21/9]">
+            <iframe
+              src={SHOP_MAP_EMBED_URL}
+              title={`Map showing the location of ${SHOP.name}`}
+              className="h-full w-full border-0"
+              loading="lazy"
+              allowFullScreen
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
         </div>
       </section>
 
