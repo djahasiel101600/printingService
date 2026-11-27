@@ -180,6 +180,7 @@ export interface CatalogueProduct {
   slug: string;
   name: string;
   description: string;
+  cover_image_url: string | null;
   category: string;
   price: number;
   price_peso: number;
@@ -209,6 +210,8 @@ export interface CatalogueProductPayload {
   display_order: number;
   default_spec: CatalogueDefaultSpec;
   instructions: string;
+  /** New upload, null to remove, or omitted to keep the current cover. */
+  cover_image?: File | null;
 }
 
 export interface Order {

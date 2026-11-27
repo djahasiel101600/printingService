@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronRight,
   FileText,
   Info,
@@ -23,10 +24,19 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Order } from "@/lib/types";
@@ -53,6 +63,15 @@ const NEEDS_ACTION = new Set([
 ]);
 
 type Flag = { text: string; tone: "urgent" | "info" };
+
+function canCompleteCatalogueInHouse(order: Order): boolean {
+  return (
+    order.order_mode === "catalogue" &&
+    order.status === "pending_review" &&
+    order.files.length > 0 &&
+    order.files.every((file) => file.replaced_by_admin && file.final_file)
+  );
+}
 
 /** Things an admin should notice before opening an order. */
 function attentionFor(order: Order): Flag[] {
@@ -109,7 +128,19 @@ function formatRelative(iso: string) {
   });
 }
 
-function OrderCard({ order }: { order: Order }) {
+function OrderCard({
+  order,
+  isShopAdmin,
+  canCompleteInHouse,
+  completionPending,
+  onCompleteInHouse,
+}: {
+  order: Order;
+  isShopAdmin: boolean;
+  canCompleteInHouse: boolean;
+  completionPending: boolean;
+  onCompleteInHouse: (order: Order) => void;
+}) {
   const flags = attentionFor(order);
   const hasUrgent = flags.some((f) => f.tone === "urgent");
   // Urgent items first so they're the first thing scanned.
@@ -202,6 +233,44 @@ function OrderCard({ order }: { order: Order }) {
             ))}
           </ul>
         )}
+
+        {order.order_mode === "catalogue" && order.status === "pending_review" && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-xs font-medium text-muted-foreground">Catalogue service</p>
+              <p className="truncate text-sm font-medium">
+                {order.product_name_snapshot ?? "Catalogue order"}
+              </p>
+              {isShopAdmin && !canCompleteInHouse && (
+                <p className="text-xs text-muted-foreground">
+                  Open the order to upload the shop-prepared layout first.
+                </p>
+              )}
+            </div>
+            {isShopAdmin && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="relative z-10"
+                disabled={!canCompleteInHouse || completionPending}
+                title={
+                  canCompleteInHouse
+                    ? undefined
+                    : "A shop-prepared layout is required."
+                }
+                onClick={() => onCompleteInHouse(order)}
+              >
+                {completionPending ? (
+                  <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <CheckCircle2 aria-hidden className="mr-2 h-4 w-4" />
+                )}
+                {completionPending ? "Completing…" : "Complete In-House"}
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -229,11 +298,13 @@ function OrderCardSkeleton() {
 
 export default function AdminOrdersPage() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const searchRef = useRef<HTMLInputElement>(null);
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [inHouseOrder, setInHouseOrder] = useState<Order | null>(null);
 
   // Debounced search so typing doesn't fire a request per keystroke.
   useEffect(() => {
@@ -302,6 +373,23 @@ export default function AdminOrdersPage() {
     },
     onSuccess: () => {
       toast.success("Print job statuses synced.");
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  const inHouseMutation = useMutation({
+    mutationFn: async (orderId: number) =>
+      (
+        await api.post<Order>(
+          `/admin/orders/${orderId}/actions/complete_in_house/`,
+          {},
+        )
+      ).data,
+    onSuccess: (data) => {
+      toast.success("Catalogue order completed in-house.");
+      setInHouseOrder(null);
+      queryClient.setQueryData(["admin-order", data.id], data);
       queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
@@ -568,7 +656,15 @@ export default function AdminOrdersPage() {
         >
           {orders.map((order) => (
             <li key={order.id}>
-              <OrderCard order={order} />
+              <OrderCard
+                order={order}
+                isShopAdmin={Boolean(user?.is_shop_admin)}
+                canCompleteInHouse={canCompleteCatalogueInHouse(order)}
+                completionPending={
+                  inHouseMutation.isPending && inHouseOrder?.id === order.id
+                }
+                onCompleteInHouse={setInHouseOrder}
+              />
             </li>
           ))}
         </ul>
@@ -619,6 +715,43 @@ export default function AdminOrdersPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={inHouseOrder !== null}
+        onOpenChange={(open) => {
+          if (!open && !inHouseMutation.isPending) setInHouseOrder(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete catalogue order in-house?</DialogTitle>
+            <DialogDescription>
+              Order {inHouseOrder?.tracking_id} will be marked complete after
+              in-house printing. No Epson print job will be created.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              disabled={inHouseMutation.isPending}
+              onClick={() => setInHouseOrder(null)}
+            >
+              Go back
+            </Button>
+            <Button
+              disabled={inHouseMutation.isPending || !inHouseOrder}
+              onClick={() =>
+                inHouseOrder && inHouseMutation.mutate(inHouseOrder.id)
+              }
+            >
+              {inHouseMutation.isPending && (
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
+              )}
+              Complete In-House
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

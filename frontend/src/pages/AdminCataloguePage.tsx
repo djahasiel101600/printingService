@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Archive,
   AlertTriangle,
+  ImagePlus,
   Loader2,
   Pencil,
   Plus,
@@ -268,12 +269,31 @@ export default function AdminCataloguePage() {
                   {products.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="min-w-56 max-w-md">
-                        <p className="font-medium">{product.name}</p>
-                        <p className="text-xs text-muted-foreground">{product.category}</p>
-                        {product.description && (
-                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{product.description}</p>
-                        )}
-                        <p className="mt-1 text-[11px] text-muted-foreground">{specSummary(product)}</p>
+                        <div className="flex items-start gap-3">
+                          {product.cover_image_url ? (
+                            <img
+                              src={product.cover_image_url}
+                              alt={`${product.name} cover photo`}
+                              loading="lazy"
+                              className="h-12 w-12 shrink-0 rounded-md object-cover"
+                            />
+                          ) : (
+                            <div
+                              aria-hidden="true"
+                              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+                            >
+                              <ImagePlus className="h-5 w-5" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium">{product.name}</p>
+                            <p className="text-xs text-muted-foreground">{product.category}</p>
+                            {product.description && (
+                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{product.description}</p>
+                            )}
+                            <p className="mt-1 text-[11px] text-muted-foreground">{specSummary(product)}</p>
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-medium tabular-nums">
                         {formatPeso(product.price_peso)}

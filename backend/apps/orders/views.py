@@ -690,14 +690,15 @@ class AdminOrderActionView(APIView):
     """Approve / Reject / Request Revision / Hold / Reprint / Ready / Complete / Cancel.
 
     Open to admins *and* approvers (``IsShopStaff``) — approving submitted print
-    orders is exactly the job the approver role exists for. The two money-side
-    actions (``cancel`` and ``record_payment``) are still owner-only.
+    orders is exactly the job the approver role exists for. Money-side actions
+    and the catalogue-only in-house completion shortcut remain owner-only.
     """
 
     permission_classes = [permissions.IsAuthenticated, IsShopStaff]
 
     ALLOWED = {
         "approve": {Order.Status.PENDING_REVIEW},
+        "complete_in_house": {Order.Status.PENDING_REVIEW},
         "reject": {Order.Status.PENDING_REVIEW, Order.Status.AWAITING_PAYMENT, Order.Status.ON_HOLD,
                    Order.Status.PRINT_CANCELLED},
         "request_revision": {Order.Status.PENDING_REVIEW},
@@ -733,11 +734,27 @@ class AdminOrderActionView(APIView):
         # Shop-driven money actions (cancel, payment record, refund on
         # reject) stay with the admin: an approver works the print queue,
         # not the till (see User.can_review_orders).
-        if action in ("cancel", "record_payment") and not request.user.is_shop_admin:
+        if action in ("cancel", "record_payment", "complete_in_house") and not request.user.is_shop_admin:
             return Response(
                 {"detail": f"Only a shop admin can {action.replace('_', ' ')} an order."},
                 status=403,
             )
+
+        if action == "complete_in_house":
+            if not order.catalogue_product_id:
+                return Response(
+                    {"detail": "In-house completion is only available for catalogue orders."},
+                    status=409,
+                )
+            source_files = list(order.files.all())
+            if not source_files or any(
+                not source.replaced_by_admin or not source.final_file for source in source_files
+            ):
+                return Response({"detail": (
+                    "Upload the shop-prepared layout through Replace file before completing "
+                    "this catalogue order in-house. Automatic preparation of the raw customer "
+                    "file is not allowed."
+                )}, status=409)
 
         if action == "approve" and order.catalogue_product_id:
             source_files = list(order.files.all())
@@ -750,15 +767,20 @@ class AdminOrderActionView(APIView):
                     "is not allowed."
                 )}, status=409)
 
+        activity_detail = (
+            f"Action: {action}. "
+            f"Subtotal {order.subtotal / 100:.2f} PHP; "
+            f"{order.amount_paid / 100:.2f} PHP paid; "
+            f"refunded {order.refunded_amount / 100:.2f} PHP."
+            if action in ("cancel", "record_payment", "reject")
+            else "Catalogue job completed in-house; no Epson job submitted."
+            if action == "complete_in_house"
+            else ""
+        )
         log_activity(
             request.user, f"order.{action}", object_type="order",
             object_repr=order.tracking_id, object_id=order.pk,
-            detail=(f"Action: {action}. "
-                    f"Subtotal {order.subtotal / 100:.2f} PHP; "
-                    f"{order.amount_paid / 100:.2f} PHP paid; "
-                    f"refunded {order.refunded_amount / 100:.2f} PHP."
-                    if action in ("cancel", "record_payment", "reject")
-                    else ""),
+            detail=activity_detail,
         )
 
         if action == "approve":
@@ -781,6 +803,12 @@ class AdminOrderActionView(APIView):
                 order.set_status(Order.Status.ON_HOLD,
                                  note=f"All print jobs failed to submit: {failed[0].error_message}",
                                  actor=request.user)
+        elif action == "complete_in_house":
+            order.set_status(
+                Order.Status.COMPLETED,
+                note=note or "Printed in-house; no Epson job submitted.",
+                actor=request.user,
+            )
         elif action == "reprint":
             response = self._reprint(request, order, note)
             if response is not None:

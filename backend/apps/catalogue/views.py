@@ -69,18 +69,24 @@ class AdminProductViewSet(mixins.CreateModelMixin, mixins.ListModelMixin,
         log_activity(
             self.request.user, "catalogue.product.create", object_type="catalogue_product",
             object_repr=product.name, object_id=product.pk,
-            detail=f"Price {product.price / 100:.2f} PHP/{product.unit_label}.",
+            detail=f"Price {product.price / 100:.2f} PHP/{product.unit_label}."
+                   + (" Cover image uploaded." if product.cover_image else ""),
         )
 
     def perform_update(self, serializer):
         old_price = serializer.instance.price
         old_active = serializer.instance.is_active
+        old_cover = serializer.instance.cover_image.name if serializer.instance.cover_image else None
         product = serializer.save()
+        new_cover = product.cover_image.name if product.cover_image else None
+        cover_change = ""
+        if old_cover != new_cover:
+            cover_change = " Cover image removed." if not new_cover else " Cover image replaced."
         log_activity(
             self.request.user, "catalogue.product.update", object_type="catalogue_product",
             object_repr=product.name, object_id=product.pk,
             detail=f"Price {old_price / 100:.2f} -> {product.price / 100:.2f} PHP; "
-                   f"active {old_active} -> {product.is_active}.",
+                   f"active {old_active} -> {product.is_active}." + cover_change,
         )
 
     def perform_destroy(self, instance):

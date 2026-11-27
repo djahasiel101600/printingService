@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -10,6 +10,7 @@ import HomePage from "@/pages/HomePage";
 import NewOrderPage from "@/pages/NewOrderPage";
 import OrderDetailPage from "@/pages/OrderDetailPage";
 import AdminOrderDetailPage from "@/pages/AdminOrderDetailPage";
+import AdminOrdersPage from "@/pages/AdminOrdersPage";
 import type { CurrentUser, Order, Quote } from "@/lib/types";
 import {
   adminUser,
@@ -109,6 +110,19 @@ beforeAll(() => {
     configurable: true,
     value: () => undefined,
   });
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
 });
 
 beforeEach(() => {
@@ -121,31 +135,76 @@ beforeEach(() => {
   fetchCatalogueMock.mockResolvedValue([catalogueProduct]);
 });
 
-describe("featured catalogue products", () => {
-  it("shows active featured products and links to catalogue ordering", async () => {
+describe("homepage catalogue products", () => {
+  it("shows all active products with distinct featured styling and product links", async () => {
+    const regularProduct = {
+      ...catalogueProduct,
+      id: 2,
+      slug: "photo-prints",
+      name: "Photo Prints",
+      category: "Photos",
+      price: 1500,
+      price_peso: 15,
+      is_featured: false,
+      display_order: 1,
+      cover_image_url: null,
+    };
+    fetchCatalogueMock.mockResolvedValue([catalogueProduct, regularProduct]);
     renderAt("/", "/", <HomePage />);
 
-    expect(await screen.findByRole("heading", { name: "Featured printing services" })).toBeInTheDocument();
-    expect(screen.getByText(catalogueProduct.name)).toBeInTheDocument();
-    expect(screen.getByText("₱30.00")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /order this service/i })).toHaveAttribute(
-      "href",
-      "/order?mode=catalogue",
+    expect(await screen.findByRole("heading", { name: "Printing services" })).toBeInTheDocument();
+    expect(await screen.findByText(catalogueProduct.name)).toBeInTheDocument();
+    expect(await screen.findByText(regularProduct.name)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "2x2 ID Picture cover photo" })).toHaveAttribute(
+      "src",
+      catalogueProduct.cover_image_url,
     );
+    expect(screen.getByText("Featured")).toBeInTheDocument();
+    const serviceLinks = screen.getAllByRole("link", { name: /order this service/i });
+    expect(serviceLinks).toHaveLength(2);
+    expect(serviceLinks[0]).toHaveAttribute(
+      "href",
+      "/order?mode=catalogue&product=1",
+    );
+    expect(serviceLinks[1]).toHaveAttribute(
+      "href",
+      "/order?mode=catalogue&product=2",
+    );
+    expect(fetchCatalogueMock).toHaveBeenCalledWith();
   });
 
-  it("hides the section when featured products fail to load", async () => {
+  it("hides the section when catalogue products fail to load", async () => {
     fetchCatalogueMock.mockRejectedValue(new Error("offline"));
     renderAt("/", "/", <HomePage />);
 
     expect(screen.getByRole("heading", { name: /Print anything/ })).toBeInTheDocument();
     await waitFor(() => expect(fetchCatalogueMock).toHaveBeenCalled());
-    expect(screen.queryByRole("heading", { name: "Featured printing services" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Printing services" })).not.toBeInTheDocument(),
+    );
     expect(screen.getByRole("heading", { name: "See it in action" })).toBeInTheDocument();
   });
 });
 
 describe("catalogue order creation", () => {
+  it("preselects the product supplied by an Order this service link", async () => {
+    postMock.mockResolvedValue({ data: catalogueQuote });
+    renderAt("/order?mode=catalogue&product=1", "/order", <NewOrderPage />);
+
+    const select = await screen.findByRole("combobox", { name: "Service" });
+    await waitFor(() => expect(select).toHaveTextContent("2x2 ID Picture"));
+    expect(screen.getByRole("img", { name: "2x2 ID Picture cover photo" })).toHaveAttribute(
+      "src",
+      catalogueProduct.cover_image_url,
+    );
+    expect(screen.getByLabelText("Quantity")).toHaveValue(1);
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith("/orders/quote/", {
+      order_mode: "catalogue",
+      product_id: 1,
+      product_quantity: 1,
+    }));
+  });
+
   it("quotes by quantity and submits one file with contact details", async () => {
     const user = userEvent.setup();
     postMock.mockImplementation(async (url: string, body: Record<string, unknown>) => {
@@ -160,6 +219,10 @@ describe("catalogue order creation", () => {
     renderAt("/order?mode=catalogue", "/order", <NewOrderPage />);
 
     await chooseCatalogueProduct(user);
+    expect(screen.getByRole("img", { name: "2x2 ID Picture cover photo" })).toHaveAttribute(
+      "src",
+      catalogueProduct.cover_image_url,
+    );
     const quantity = screen.getByLabelText("Quantity");
     await user.clear(quantity);
     await user.type(quantity, "2");
@@ -311,6 +374,119 @@ describe("catalogue order details", () => {
     expect(await screen.findByRole("heading", { name: catalogueOrder.tracking_id })).toBeInTheDocument();
     expect(screen.queryByLabelText("Finished quantity")).not.toBeInTheDocument();
     expect(screen.getByText(/Quantity can be changed only by a shop admin/)).toBeInTheDocument();
+  });
+
+  it("lets an admin complete a prepared catalogue order in-house", async () => {
+    const user = userEvent.setup();
+    authState.user = adminUser;
+    const preparedOrder: Order = { ...catalogueOrder, files: [preparedCatalogueFile] };
+    getMock.mockResolvedValue({ data: preparedOrder });
+    postMock.mockResolvedValue({ data: {
+      ...preparedOrder,
+      status: "completed",
+      status_display: "Completed",
+      completed_at: "2026-01-02T08:00:00Z",
+    } });
+    renderAt("/admin/orders/17", "/admin/orders/:id", <AdminOrderDetailPage />);
+
+    expect(await screen.findByRole("heading", { name: catalogueOrder.tracking_id })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Complete In-House" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/No Epson print job will be created/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Complete In-House" }));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+      "/admin/orders/17/actions/complete_in_house/",
+      { note: "" },
+    ));
+    expect(await screen.findByText("Completed", { selector: "span" })).toBeInTheDocument();
+  });
+
+  it("does not offer in-house completion to approvers or custom orders", async () => {
+    authState.user = approverUser;
+    getMock.mockResolvedValue({ data: { ...catalogueOrder, files: [preparedCatalogueFile] } });
+    const first = renderAt("/admin/orders/17", "/admin/orders/:id", <AdminOrderDetailPage />);
+    expect(await screen.findByRole("heading", { name: catalogueOrder.tracking_id })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete In-House" })).not.toBeInTheDocument();
+    first.unmount();
+
+    authState.user = adminUser;
+    getMock.mockResolvedValue({ data: {
+      ...catalogueOrder,
+      order_mode: "custom",
+      catalogue_product: null,
+      files: [preparedCatalogueFile],
+    } });
+    renderAt("/admin/orders/17", "/admin/orders/:id", <AdminOrderDetailPage />);
+    expect(await screen.findByRole("heading", { name: catalogueOrder.tracking_id })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete In-House" })).not.toBeInTheDocument();
+  });
+});
+
+describe("review queue in-house completion", () => {
+  it("lets a shop admin complete a prepared catalogue order directly from the queue", async () => {
+    const user = userEvent.setup();
+    authState.user = adminUser;
+    const preparedOrder: Order = { ...catalogueOrder, files: [preparedCatalogueFile] };
+    getMock.mockResolvedValue({ data: [preparedOrder] });
+    postMock.mockResolvedValue({ data: {
+      ...preparedOrder,
+      status: "completed",
+      status_display: "Completed",
+      completed_at: "2026-01-02T08:00:00Z",
+    } });
+    renderAt("/admin", "/admin", <AdminOrdersPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Complete In-House" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/No Epson print job will be created/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Complete In-House" }));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+      "/admin/orders/17/actions/complete_in_house/",
+      {},
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("does not offer the queue shortcut to approvers", async () => {
+    authState.user = approverUser;
+    getMock.mockResolvedValue({ data: [{
+      ...catalogueOrder,
+      files: [preparedCatalogueFile],
+    }] });
+    renderAt("/admin", "/admin", <AdminOrdersPage />);
+
+    expect(await screen.findByText(catalogueOrder.tracking_id)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete In-House" })).not.toBeInTheDocument();
+  });
+
+  it("disables unprepared catalogue orders and hides the shortcut for other orders", async () => {
+    authState.user = adminUser;
+    const preparedOrder: Order = { ...catalogueOrder, files: [preparedCatalogueFile] };
+    getMock.mockResolvedValue({ data: [
+      catalogueOrder,
+      {
+        ...preparedOrder,
+        id: 18,
+        tracking_id: "PSP-CUSTOM-002",
+        order_mode: "custom",
+        catalogue_product: null,
+      },
+      {
+        ...preparedOrder,
+        id: 19,
+        tracking_id: "PSP-CAT-003",
+        status: "completed",
+        status_display: "Completed",
+      },
+    ] });
+    renderAt("/admin", "/admin", <AdminOrdersPage />);
+
+    expect(await screen.findByText(catalogueOrder.tracking_id)).toBeInTheDocument();
+    const shortcut = screen.getByRole("button", { name: "Complete In-House" });
+    expect(shortcut).toBeDisabled();
+    expect(screen.getByText(/Open the order to upload the shop-prepared layout first/)).toBeInTheDocument();
   });
 });
 

@@ -1,9 +1,21 @@
+from pathlib import Path
+from uuid import uuid4
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils.text import slugify
 
-from .validators import validate_default_spec
+from .validators import validate_cover_image, validate_default_spec
+
+
+def catalogue_cover_upload_to(instance, filename) -> str:
+    """Store cover photos under a stable product path with collision-safe names."""
+    slug = instance.slug or f"product-{instance.pk or 'new'}"
+    extension = Path(str(filename)).suffix.lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        extension = ".jpg"
+    return f"catalogue/products/{slug}/{uuid4().hex}{extension}"
 
 
 class Product(models.Model):
@@ -12,6 +24,14 @@ class Product(models.Model):
     name = models.CharField(max_length=120)
     slug = models.SlugField(max_length=140, unique=True, editable=False)
     description = models.TextField(blank=True)
+    cover_image = models.ImageField(
+        upload_to=catalogue_cover_upload_to,
+        validators=[validate_cover_image],
+        blank=True,
+        null=True,
+        max_length=255,
+        help_text="Optional JPEG, PNG, or WebP cover photo (maximum 5 MB).",
+    )
     category = models.CharField(max_length=80)
     price = models.PositiveIntegerField(
         validators=[MinValueValidator(1)],

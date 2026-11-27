@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { ImagePlus, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ import {
   createCatalogueProduct,
   pesoToCentavos,
   updateCatalogueProduct,
+  validateCatalogueCoverImage,
 } from "@/lib/catalogue";
 import type {
   CatalogueDefaultSpec,
@@ -198,13 +199,37 @@ export default function CatalogueProductForm({
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProductFormState>(() => formFromProduct(product));
   const [errors, setErrors] = useState<FormErrors>({});
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverRemoved, setCoverRemoved] = useState(false);
+  const [coverError, setCoverError] = useState<string>();
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const existingCoverUrl = coverRemoved ? null : product?.cover_image_url ?? null;
+  const displayedCoverUrl = coverFile ? coverPreview : existingCoverUrl;
 
   useEffect(() => {
     if (open) {
       setForm(formFromProduct(product));
       setErrors({});
+      setCoverFile(null);
+      setCoverRemoved(false);
+      setCoverError(undefined);
+      setCoverPreview(null);
+      if (coverInputRef.current) coverInputRef.current.value = "";
     }
   }, [open, product]);
+
+  useEffect(() => {
+    if (!coverFile || typeof URL.createObjectURL !== "function") {
+      setCoverPreview(null);
+      return;
+    }
+    const previewUrl = URL.createObjectURL(coverFile);
+    setCoverPreview(previewUrl);
+    return () => {
+      if (typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(previewUrl);
+    };
+  }, [coverFile]);
 
   function update<K extends keyof ProductFormState>(key: K, value: ProductFormState[K]) {
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -221,6 +246,27 @@ export default function CatalogueProductForm({
     }));
   }
 
+  function selectCover(file: File | undefined) {
+    if (!file) return;
+    const validationError = validateCatalogueCoverImage(file);
+    if (validationError) {
+      setCoverFile(null);
+      setCoverError(validationError);
+      if (coverInputRef.current) coverInputRef.current.value = "";
+      return;
+    }
+    setCoverFile(file);
+    setCoverRemoved(false);
+    setCoverError(undefined);
+  }
+
+  function removeCover() {
+    setCoverFile(null);
+    setCoverRemoved(true);
+    setCoverError(undefined);
+    if (coverInputRef.current) coverInputRef.current.value = "";
+  }
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const result = catalogueProductPayload(form);
@@ -228,6 +274,11 @@ export default function CatalogueProductForm({
         setErrors(result.errors);
         throw new Error("Please fix the highlighted fields.");
       }
+      if (coverError) {
+        throw new Error("Please fix the highlighted fields.");
+      }
+      if (coverFile) result.payload.cover_image = coverFile;
+      else if (coverRemoved) result.payload.cover_image = null;
       return product
         ? updateCatalogueProduct(product.id, result.payload)
         : createCatalogueProduct(result.payload);
@@ -235,6 +286,7 @@ export default function CatalogueProductForm({
     onSuccess: (saved) => {
       toast.success(product ? "Catalogue product updated." : "Catalogue product created.");
       queryClient.invalidateQueries({ queryKey: ["admin-catalogue-products"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-catalogue-categories"] });
       queryClient.invalidateQueries({ queryKey: ["catalogue-products"] });
       onOpenChange(false);
       onSaved?.(saved);
@@ -272,6 +324,52 @@ export default function CatalogueProductForm({
                 placeholder="e.g. 2x2 ID Picture"
               />
               <FieldError id="product-name-error" message={errors.name} />
+            </div>
+            <div className="space-y-3 rounded-md border p-4 sm:col-span-2">
+              <div className="space-y-1">
+                <Label htmlFor="product-cover">Cover photo</Label>
+                <p id="product-cover-help" className="text-xs text-muted-foreground">
+                  Optional. Shown on the public catalogue and featured-product cards. JPEG, PNG, or WebP, up to 5 MB.
+                </p>
+              </div>
+              <Input
+                ref={coverInputRef}
+                id="product-cover"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={saveMutation.isPending}
+                onChange={(event) => selectCover(event.target.files?.[0])}
+                aria-invalid={!!coverError}
+                aria-describedby={coverError ? "product-cover-help product-cover-error" : "product-cover-help"}
+                className="file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm"
+              />
+              {displayedCoverUrl ? (
+                <div className="overflow-hidden rounded-md border bg-muted">
+                  <img
+                    src={displayedCoverUrl}
+                    alt={`${form.name || "Product"} cover preview`}
+                    className="h-40 w-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className="flex h-28 items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 text-sm text-muted-foreground">
+                  <ImagePlus className="h-5 w-5" aria-hidden="true" />
+                  No cover photo uploaded
+                </div>
+              )}
+              {displayedCoverUrl && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={removeCover}
+                  disabled={saveMutation.isPending}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Remove cover photo
+                </Button>
+              )}
+              <FieldError id="product-cover-error" message={coverError} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="product-category">Category</Label>

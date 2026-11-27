@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from django.core.exceptions import ValidationError
+from PIL import Image, UnidentifiedImageError
 
 from apps.printing.constants import (
     EPSON_COLOR_MODES,
@@ -23,6 +26,46 @@ CHOICES = {
     "source": {value for value, _ in EPSON_PAPER_SOURCES},
 }
 BOOLEAN_SPEC_KEYS = {"borderless", "reverse_order", "collate"}
+
+COVER_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+COVER_IMAGE_MAX_PIXELS = 20_000_000
+COVER_IMAGE_EXTENSIONS = {
+    "JPEG": {".jpg", ".jpeg"},
+    "PNG": {".png"},
+    "WEBP": {".webp"},
+}
+
+
+def validate_cover_image(value):
+    """Accept only reasonably sized, genuinely decoded raster cover photos."""
+    if not value:
+        return value
+    if getattr(value, "size", None) and value.size > COVER_IMAGE_MAX_BYTES:
+        raise ValidationError("Cover photo must be 5 MB or smaller.")
+
+    try:
+        value.seek(0)
+        with Image.open(value) as image:
+            image_format = image.format
+            if image_format not in COVER_IMAGE_EXTENSIONS:
+                raise ValidationError("Cover photo must be a JPEG, PNG, or WebP image.")
+            if image.width * image.height > COVER_IMAGE_MAX_PIXELS:
+                raise ValidationError("Cover photo dimensions are too large.")
+            image.verify()
+    except ValidationError:
+        raise
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError, ValueError) as exc:
+        raise ValidationError("Upload a valid JPEG, PNG, or WebP image.") from exc
+    finally:
+        try:
+            value.seek(0)
+        except (AttributeError, OSError):
+            pass
+
+    extension = Path(str(getattr(value, "name", ""))).suffix.lower()
+    if extension not in COVER_IMAGE_EXTENSIONS[image_format]:
+        raise ValidationError("The cover photo file extension must match its image format.")
+    return value
 
 
 def validate_default_spec(value):

@@ -11,6 +11,7 @@ export const catalogueProduct: CatalogueProduct = {
   slug: "2x2-id-picture",
   name: "2x2 ID Picture",
   description: "Shop-prepared 2x2 ID pictures from one source photo.",
+  cover_image_url: "/media/catalogue/products/2x2-id-picture/cover.png",
   category: "ID photos",
   price: 3000,
   price_peso: 30,

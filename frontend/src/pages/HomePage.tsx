@@ -9,6 +9,7 @@ import {
   Printer,
   QrCode,
   ShieldCheck,
+  Sparkles,
   Store,
   UserRound,
 } from "lucide-react";
@@ -16,7 +17,7 @@ import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { fetchAllCatalogueProducts } from "@/lib/catalogue";
-import { formatPeso } from "@/lib/utils";
+import { cn, formatPeso } from "@/lib/utils";
 
 const STEPS = [
   {
@@ -37,7 +38,7 @@ const STEPS = [
   {
     icon: Printer,
     title: "Printed and ready",
-    desc: "Your job goes to our Epson printer, and you can follow its progress until it's ready for pickup at our shop.",
+    desc: "Your job is printed in our shop, and you can follow its progress until it's ready for pickup.",
   },
 ];
 
@@ -144,12 +145,12 @@ function OrderSlip() {
 }
 
 export default function HomePage() {
-  const featuredProductsQuery = useQuery({
-    queryKey: ["catalogue-products", "featured"],
-    queryFn: () => fetchAllCatalogueProducts({ featured: true }),
+  const catalogueProductsQuery = useQuery({
+    queryKey: ["catalogue-products", "all"],
+    queryFn: () => fetchAllCatalogueProducts(),
     retry: false,
   });
-  const featuredProducts = featuredProductsQuery.data ?? [];
+  const catalogueProducts = catalogueProductsQuery.data ?? [];
 
   return (
     <div className="space-y-20 sm:space-y-28">
@@ -286,8 +287,8 @@ export default function HomePage() {
       </section>
 
       {/* Catalogue services are optional: a failed request simply hides this section. */}
-      {!featuredProductsQuery.isError &&
-        (featuredProductsQuery.isLoading || featuredProducts.length > 0) && (
+      {!catalogueProductsQuery.isError &&
+        (catalogueProductsQuery.isLoading || catalogueProducts.length > 0) && (
           <section aria-labelledby="catalogue-title">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div className="max-w-2xl">
@@ -295,20 +296,20 @@ export default function HomePage() {
                   id="catalogue-title"
                   className="text-3xl font-bold tracking-tight sm:text-4xl"
                 >
-                  Featured printing services
+                  Printing services
                 </h2>
                 <p className="mt-2 text-muted-foreground">
                   Fixed-price services prepared by our shop. Upload one source
-                  file and choose your quantity.
+                  file and choose your quantity. Featured services are highlighted.
                 </p>
               </div>
               <Button asChild variant="outline">
-                <Link to="/order?mode=catalogue">View all services</Link>
+                <Link to="/order?mode=catalogue">Browse catalogue</Link>
               </Button>
             </div>
 
             <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {featuredProductsQuery.isLoading
+              {catalogueProductsQuery.isLoading
                 ? [0, 1, 2].map((n) => (
                     <div
                       key={n}
@@ -316,40 +317,71 @@ export default function HomePage() {
                       className="h-64 rounded-2xl border bg-muted/50 motion-safe:animate-pulse"
                     />
                   ))
-                : featuredProducts.map((product) => (
+                : catalogueProducts.map((product) => (
                     <article
                       key={product.id}
-                      className="group flex flex-col rounded-2xl border bg-card p-6 shadow-sm transition-shadow hover:shadow-lg"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
-                          <Store aria-hidden className="h-5 w-5" />
-                        </div>
-                        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                          {product.category}
-                        </span>
-                      </div>
-                      <h3 className="mt-5 text-lg font-semibold">
-                        {product.name}
-                      </h3>
-                      {product.description && (
-                        <p className="mt-2 flex-1 text-sm leading-relaxed text-muted-foreground">
-                          {product.description}
-                        </p>
+                      className={cn(
+                        "group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-lg",
+                        product.is_featured && "border-primary/50 shadow-md ring-1 ring-primary/20",
                       )}
-                      <div className="mt-5 border-t border-dashed pt-4">
-                        <p className="text-2xl font-bold">
-                          {formatPeso(product.price_peso)}
-                          <span className="ml-1 text-sm font-normal text-muted-foreground">
-                            per {product.unit_label}
-                          </span>
-                        </p>
-                        <Button asChild className="mt-4 w-full">
-                          <Link to="/order?mode=catalogue">
-                            Order this service{" "}
-                            <ArrowRight aria-hidden className="ml-2 h-4 w-4" />
-                          </Link>
-                        </Button>
+                    >
+                      {product.cover_image_url ? (
+                        <img
+                          src={product.cover_image_url}
+                          alt={`${product.name} cover photo`}
+                          loading="lazy"
+                          decoding="async"
+                          className="aspect-[16/9] w-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          aria-hidden="true"
+                          className="flex aspect-[16/9] w-full items-center justify-center bg-muted/60 text-primary/50"
+                        >
+                          <Store className="h-10 w-10" />
+                        </div>
+                      )}
+                      <div className="flex flex-1 flex-col p-6">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
+                            <Store aria-hidden className="h-5 w-5" />
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-2">
+                            {product.is_featured && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+                                <Sparkles aria-hidden className="h-3 w-3" />
+                                Featured
+                              </span>
+                            )}
+                            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                              {product.category}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-5 flex flex-1 flex-col">
+                          <h3 className="text-lg font-semibold">
+                            {product.name}
+                          </h3>
+                          {product.description && (
+                            <p className="mt-2 flex-1 text-sm leading-relaxed text-muted-foreground">
+                              {product.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="mt-5 border-t border-dashed pt-4">
+                          <p className="text-2xl font-bold">
+                            {formatPeso(product.price_peso)}
+                            <span className="ml-1 text-sm font-normal text-muted-foreground">
+                              per {product.unit_label}
+                            </span>
+                          </p>
+                          <Button asChild className="mt-4 w-full">
+                            <Link to={`/order?mode=catalogue&product=${product.id}`}>
+                              Order this service{" "}
+                              <ArrowRight aria-hidden className="ml-2 h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </div>
                       </div>
                     </article>
                   ))}

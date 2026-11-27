@@ -247,7 +247,7 @@ For partial payments, the Payment Intent amount is set to the partial amount; a 
 
 - **User** — `id`, `role` (guest/client/admin), `name`, `email`, `phone`, `facebook_handle`, `password_hash` (if registered), `created_at`.
 - **Order** — `id`, `tracking_id`, `user_id` (nullable for guest + guest contact snapshot), `status`, `subtotal`, `amount_paid`, `balance_due`, `payment_type` (full/partial), `admin_notes`, `created_at`, `approved_at`, `completed_at`. Catalogue orders also store `catalogue_product`, `product_name_snapshot`, `product_unit_price_snapshot`, `product_unit_label_snapshot`, `product_instructions_snapshot`, `product_min_quantity_snapshot`, `product_max_quantity_snapshot`, and `product_quantity`.
-- **CatalogueProduct** — `id`, unique immutable `slug`, `name`, `description`, `category`, `price` (centavos), `unit_label`, `min_quantity`, nullable `max_quantity`, `is_active`, `is_featured`, `display_order`, `default_spec`, customer/staff `instructions`, `created_at`, `updated_at`.
+- **CatalogueProduct** — `id`, unique immutable `slug`, `name`, `description`, optional `cover_image` with public `cover_image_url`, `category`, `price` (centavos), `unit_label`, `min_quantity`, nullable `max_quantity`, `is_active`, `is_featured`, `display_order`, `default_spec`, customer/staff `instructions`, `created_at`, `updated_at`.
 - **OrderFile** — `id`, `order_id`, `original_file_url`, `edited_file_url`, `file_type`, `page_count`, `edit_actions` (crop/split/resize/center metadata).
 - **PrintSpecification** — `id`, `order_file_id` (or `order_id` if applied to all), `media_size`, `media_type`, `color_mode`, `sides`, `print_quality`, `copies`, `borderless`, `source`, `free_text_instructions`.
 - **Payment** — `id`, `order_id`, `paymongo_payment_intent_id`, `amount`, `method` (qrph), `status`, `paid_at`, `refund_status`.
@@ -284,14 +284,14 @@ For partial payments, the Payment Intent amount is set to the partial amount; a 
 ### 12.1 Product and pricing rules
 
 - **FR-35:** Shop admins can list, search, filter, create, edit, feature, reactivate, and archive catalogue products. Approvers and customers cannot manage products.
-- **FR-36:** Public catalogue endpoints return active products only, with search, category, featured, and pagination support. Inactive product detail returns 404.
+- **FR-36:** Public catalogue endpoints return active products only, with search, category, featured, and pagination support. Inactive product detail returns 404. The homepage displays every active product, with featured products identified by a badge and distinct styling.
 - **FR-37:** Product prices are positive integer centavos. Admin peso input is converted exactly without floating-point rounding and rejects more than two decimal places.
 - **FR-38:** Quantity bounds are positive and ordered. `default_spec` accepts existing print-spec fields and Epson vocabulary; catalogue orders always force Epson `copies=1` because finished-piece quantity is separate from printer copies.
 - **FR-39:** A non-overwriting data migration seeds `2x2 ID Picture` (`2x2-id-picture`) at ₱30.00 per piece, quantity 1–99, active and featured, with A4 photo-paper color/high-quality/single-sided/portrait defaults and one Epson copy. Existing admin-edited products are never overwritten.
 
 ### 12.2 Catalogue ordering and historical integrity
 
-- **FR-40:** A catalogue order contains one product and exactly one uploaded source file. The server resolves an active product, validates quantity, merges product defaults with submitted settings, and forces Epson `copies=1`.
+- **FR-40:** A catalogue order contains one product and exactly one uploaded source file. The server resolves an active product, validates quantity, merges product defaults with submitted settings, and forces Epson `copies=1`. Homepage **Order this service** links include the product ID, and the catalogue order form preselects that service and its minimum quantity.
 - **FR-41:** Product name, unit price, unit label, instructions, and quantity bounds are snapshotted at creation. Product edits, archival, file changes, page selection, color analysis, and specification changes never reprice an existing catalogue order.
 - **FR-42:** Catalogue quote lines use `kind="catalogue"` with quantity, unit label, unit price, and amount; page/copy/side/color values are null. Existing custom quote lines remain `kind="custom"` and retain per-side calculations. Missing catalogue snapshots fail closed rather than falling back to custom pricing.
 - **FR-43:** Guest, registered-customer, and admin-created catalogue orders use the existing payment, review, tracking, and notification lifecycle.
@@ -302,14 +302,25 @@ For partial payments, the Payment Intent amount is set to the partial amount; a 
 - **FR-45:** Quantity changes validate against snapshotted bounds and reprice from the snapshotted unit price. They clear prepared output and page selection, reset `replaced_by_admin`, and add unchanged-status history and activity entries.
 - **FR-46:** Approval is blocked with HTTP 409 unless every catalogue source file has `replaced_by_admin=True` and a non-empty `final_file`. The guard runs before automatic preparation, changes no status, creates no print job, and logs no successful approval. Customer re-upload clears preparation state and reactivates the guard.
 
-### 12.4 Catalogue API summary
+### 12.4 Catalogue cover photos
+
+- **FR-47:** Shop admins can upload, preview, replace, or remove an optional product cover photo from the catalogue editor and Django admin. Approvers and customers cannot upload covers. The admin API accepts multipart `cover_image` uploads; omitting the field preserves the current photo and JSON `null` removes it. Replaced or removed files are cleaned up after the database transaction commits.
+- **FR-48:** Covers must be genuine JPEG, PNG, or WebP images with matching filename extensions, at most 5 MB and 20 megapixels. Public active-product responses expose an absolute `cover_image_url`. Homepage product cards and the catalogue service selector display the photo, with a generic placeholder when absent. Cover changes never alter historical order price snapshots.
+
+### 12.5 In-house catalogue completion
+
+- **FR-49:** A shop admin can complete a `pending review` catalogue order in-house after printing it directly, without creating or submitting an Epson print job. Approvers and custom-order customers cannot use this action. The order moves to `completed`, stamps `completed_at`, records status history and activity, and sends the existing completion notification.
+- **FR-50:** In-house completion is blocked with HTTP 409 unless every catalogue source file has `replaced_by_admin=True` and a non-empty `final_file`. The guard runs before any status, history, activity, or printer change.
+
+### 12.6 Catalogue API summary
 
 | Method | Endpoint | Access | Purpose |
 |---|---|---|---|
 | GET | `/api/catalogue/products/` | Public | Active products with search/category/featured/pagination |
 | GET | `/api/catalogue/products/{slug}/` | Public | Active product detail |
-| GET/POST | `/api/admin/catalogue/products/` | Shop admin | List all products / create product |
-| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Shop admin | Detail / update / archive |
+| GET/POST | `/api/admin/catalogue/products/` | Shop admin | List all products / create product (JSON or multipart with optional cover) |
+| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Shop admin | Detail / update, including multipart cover replacement / archive |
 | POST | `/api/orders/quote/` | Public | Quote custom files or catalogue product + quantity |
 | POST | `/api/orders/` | Public/account/admin | Create custom or catalogue order |
 | PATCH | `/api/admin/orders/{id}/product/` | Shop admin | Adjust unpaid pre-approval catalogue quantity |
+| POST | `/api/admin/orders/{id}/actions/complete_in_house/` | Shop admin | Complete a prepared catalogue order without an Epson job |

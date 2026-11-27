@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   Copy,
   Loader2,
   Printer,
@@ -41,6 +42,7 @@ import type { Order, OrderFile, PrintJob } from "@/lib/types";
 
 type AdminAction =
   | "approve"
+  | "complete_in_house"
   | "reject"
   | "request_revision"
   | "hold"
@@ -53,6 +55,7 @@ type AdminAction =
 
 const ACTION_LABELS: Record<AdminAction, string> = {
   approve: "Approve & Queue",
+  complete_in_house: "Complete In-House",
   reject: "Reject",
   request_revision: "Request Revision",
   hold: "Put On Hold",
@@ -74,14 +77,19 @@ const QUANTITY_EDITABLE_STATUSES: Order["status"][] = [
 ];
 
 /** Actions the shop can take from each status (mirrors the API's ALLOWED map). */
-function availableActions(status: Order["status"]): AdminAction[] {
+function availableActions(
+  status: Order["status"],
+  isCatalogue = false,
+): AdminAction[] {
   switch (status) {
     case "draft":
       return ["cancel"];
     case "awaiting_payment":
       return ["reject", "cancel"];
     case "pending_review":
-      return ["approve", "reject", "request_revision"];
+      return isCatalogue
+        ? ["approve", "complete_in_house", "reject", "request_revision"]
+        : ["approve", "reject", "request_revision"];
     case "approved_queued":
       return ["hold", "reprint", "cancel"];
     case "on_hold":
@@ -166,7 +174,9 @@ export default function AdminOrderDetailPage() {
       toast.success(
         variables.action === "reprint"
           ? `Reprint #${data.reprint_count} sent to the printer.`
-          : "Order updated.",
+          : variables.action === "complete_in_house"
+            ? "Catalogue order completed in-house."
+            : "Order updated.",
       );
       setNote("");
       setConfirmAction(null);
@@ -249,16 +259,16 @@ export default function AdminOrderDetailPage() {
     );
   }
 
-  const actions = availableActions(order.status);
-  // Approvers work the print queue, but cancelling an order (which refunds)
-  // and recording cash are owner-only — mirrors the API's guard.
+  const printerCancelled = order.status === "print_cancelled";
+  const isCatalogue = order.order_mode === "catalogue";
+  const actions = availableActions(order.status, isCatalogue);
+  // Approvers work the print queue, but cancelling an order (which refunds),
+  // recording cash, and completing catalogue jobs in-house are owner-only.
   const visibleActions = user?.is_shop_admin
     ? actions
     : actions.filter(
-        (action) => action !== "cancel" && action !== "record_payment",
+        (action) => action !== "cancel" && action !== "record_payment" && action !== "complete_in_house",
       );
-  const printerCancelled = order.status === "print_cancelled";
-  const isCatalogue = order.order_mode === "catalogue";
   const catalogueNeedsLayout =
     isCatalogue &&
     (order.files.length === 0 ||
@@ -515,6 +525,9 @@ export default function AdminOrderDetailPage() {
                       {action === "record_payment" && (
                         <Wallet aria-hidden className="mr-2 h-4 w-4" />
                       )}
+                      {action === "complete_in_house" && (
+                        <CheckCircle2 aria-hidden className="mr-2 h-4 w-4" />
+                      )}
                       {ACTION_LABELS[action]}
                     </Button>
                   ))}
@@ -766,11 +779,15 @@ export default function AdminOrderDetailPage() {
             </DialogTitle>
             <DialogDescription>
               Order {order.tracking_id} ·{" "}
-              {confirmAction === "approve"
+              {confirmAction === "complete_in_house"
                 ? catalogueNeedsLayout
-                  ? "Approval is blocked until staff upload the shop-prepared layout."
-                  : "This releases the job to the printer."
-                : "This will change the order status."}
+                  ? "In-house completion is blocked until staff upload the shop-prepared layout."
+                  : "This marks the catalogue job complete after in-house printing. No Epson print job will be created."
+                : confirmAction === "approve"
+                  ? catalogueNeedsLayout
+                    ? "Approval is blocked until staff upload the shop-prepared layout."
+                    : "This releases the job to the printer."
+                  : "This will change the order status."}
               {confirmAction &&
                 DESTRUCTIVE.includes(confirmAction) &&
                 " This can't be undone."}

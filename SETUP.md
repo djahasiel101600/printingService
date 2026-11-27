@@ -185,10 +185,10 @@ environment. Edit them at runtime from **Admin → Pricing** (`/admin/pricing`):
   centavos / ₱5.00).
 
 Catalogue products are separate from these per-side rules. Shop admins manage their
-fixed unit prices, quantity limits, print defaults, and instructions at
-**Admin → Catalogue** (`/admin/catalogue`). Catalogue orders snapshot those values
-at creation, so later product edits or archival never reprice existing orders.
-Catalogue quantity means finished pieces; Epson `copies` is always forced to `1`.
+fixed unit prices, quantity limits, print defaults, instructions, and optional cover
+photos at **Admin → Catalogue** (`/admin/catalogue`). Catalogue orders snapshot the
+pricing values at creation, so later product edits or archival never reprice existing
+orders. Catalogue quantity means finished pieces; Epson `copies` is always forced to `1`.
 
 The `MIN_PARTIAL_PERCENT` and `DUPLEX_DISCOUNT_FACTOR` environment variables
 are **only read once**, by migration `pricing.0002`, to seed the singleton row
@@ -230,7 +230,7 @@ python manage.py migrate
 
 This creates tables for:
 - Users & authentication
-- Catalogue products and the non-overwriting 2x2 ID Picture seed
+- Catalogue products, optional cover photos, and the non-overwriting 2x2 ID Picture seed
 - Pricing rules
 - Orders, files, specifications, and catalogue snapshots
 - Payments
@@ -276,9 +276,37 @@ by slug (`2x2-id-picture`) and never overwrites an existing admin-edited product
 No extra seed command is required after `python manage.py migrate`.
 
 Manage or archive products from **Admin → Catalogue**. Archiving deactivates a
-product for new orders but preserves historical order snapshots. A catalogue order
-cannot be approved until staff upload the shop-prepared layout through **Upload
-prepared layout** on its source file.
+product for new orders but preserves historical order snapshots. The homepage shows
+all active products and gives featured products a badge and highlighted styling.
+Selecting **Order this service** opens catalogue ordering with that product already
+selected.
+
+A catalogue order cannot be approved until staff upload the shop-prepared layout
+through **Upload prepared layout** on its source file. If the shop prints the job
+directly in-house, a shop admin can choose **Complete In-House** from the Review
+Queue card or the pending review order. This also requires the prepared layout,
+marks the order completed, and creates no Epson print job.
+
+### Catalogue Cover Photos
+
+Migration `catalogue.0003_product_cover_image` adds an optional cover photo to each
+product. Run `python manage.py migrate` before using the updated catalogue UI or API.
+
+- Upload, preview, replace, or remove covers in the product editor at
+  **Admin → Catalogue**. Django admin also shows a cover preview.
+- Accepted formats are JPEG, PNG, and WebP, with matching filename extensions.
+  The server rejects invalid images, files larger than **5 MB**, and images larger
+  than **20 megapixels**.
+- Files are stored under `MEDIA_ROOT/catalogue/products/<product-slug>/` with
+  unique filenames. The Docker deployment persists them in the `printservice-media`
+  volume and serves `/media/` through nginx.
+- Public catalogue responses include `cover_image_url`, or `null` when no cover is
+  set. Featured products and the catalogue order selector display this photo.
+- Admin create/update requests may use multipart `cover_image`. Omitting it keeps
+  the existing photo; JSON `{"cover_image": null}` removes it. Successful replacement
+  or removal deletes the old file after the database transaction commits.
+
+Cover photos are presentation-only and are not copied into order price snapshots.
 
 ### Customize Seed Data
 
@@ -666,6 +694,8 @@ FRONTEND_URL=https://yourdomain.com
 | Catalogue approval returns `409` | Upload the shop-prepared layout through **Upload prepared layout** on every catalogue source file |
 | Catalogue quantity update returns `409` | Only shop admins can change unpaid catalogue quantities in draft, awaiting-payment, pending-review, or revision-requested states |
 | Featured products do not appear | Confirm the product is active and featured at `/admin/catalogue`; public endpoints hide archived products |
+| Cover upload returns `400` | Use a valid JPEG, PNG, or WebP no larger than 5 MB and no more than 20 megapixels; the filename extension must match the image format |
+| Product cover photo is broken or missing | Apply `catalogue.0003_product_cover_image`, confirm `MEDIA_ROOT` is writable and persistent, and verify `/media/` is served by Django locally or proxied to the backend by nginx |
 
 ### Reset Database
 
@@ -703,8 +733,8 @@ curl http://localhost:5173
 |--------|----------|-------------|
 | GET | `/api/catalogue/products/` | List active products; supports search, category, featured, and pagination |
 | GET | `/api/catalogue/products/{slug}/` | Active product detail |
-| GET/POST | `/api/admin/catalogue/products/` | List all products / create product (shop admin) |
-| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Detail / update / archive (shop admin) |
+| GET/POST | `/api/admin/catalogue/products/` | List all products / create product, including multipart cover upload (shop admin) |
+| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Detail / update, including cover replacement or removal / archive (shop admin) |
 
 ### Orders
 | Method | Endpoint | Description |

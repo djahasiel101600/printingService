@@ -65,6 +65,10 @@ describe("AdminCataloguePage", () => {
     renderPage();
 
     expect(await screen.findByText(catalogueProduct.name)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "2x2 ID Picture cover photo" })).toHaveAttribute(
+      "src",
+      catalogueProduct.cover_image_url,
+    );
     await user.click(screen.getByRole("button", { name: /new product/i }));
     expect(screen.getByRole("dialog")).toHaveTextContent("New product form");
     await user.click(screen.getByRole("button", { name: "Close form" }));

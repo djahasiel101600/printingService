@@ -270,6 +270,7 @@ export default function NewOrderPage({
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isCatalogue = searchParams.get("mode") === "catalogue";
+  const requestedCatalogueProductId = searchParams.get("product") ?? "";
   const [files, setFiles] = useState<File[]>([]);
   /** Orientation only affects picture files, so the control follows the uploads. */
   const hasImages = files.some((file) =>
@@ -293,7 +294,9 @@ export default function NewOrderPage({
   const [dragging, setDragging] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [uploadPct, setUploadPct] = useState<number | null>(null);
-  const [catalogueProductId, setCatalogueProductId] = useState("");
+  const [catalogueProductId, setCatalogueProductId] = useState(
+    requestedCatalogueProductId,
+  );
   const [catalogueQuantity, setCatalogueQuantity] = useState("1");
   const [catalogueInstructions, setCatalogueInstructions] = useState("");
 
@@ -315,6 +318,13 @@ export default function NewOrderPage({
   const selectedProduct = catalogueProducts.find(
     (product) => String(product.id) === catalogueProductId,
   );
+
+  useEffect(() => {
+    if (selectedProduct) {
+      setCatalogueQuantity(String(selectedProduct.min_quantity));
+    }
+  }, [selectedProduct?.id]);
+
   const catalogueQuantityIsValid = Boolean(
     selectedProduct &&
       /^\d+$/.test(catalogueQuantity) &&

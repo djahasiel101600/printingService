@@ -5,6 +5,26 @@ import type {
   Paginated,
 } from "@/lib/types";
 
+export const CATALOGUE_COVER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+const COVER_IMAGE_TYPES: Record<string, string[]> = {
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/png": ["png"],
+  "image/webp": ["webp"],
+};
+
+export function validateCatalogueCoverImage(file: File): string | null {
+  if (file.size > CATALOGUE_COVER_IMAGE_MAX_BYTES) {
+    return "Cover photo must be 5 MB or smaller.";
+  }
+  const extensions = COVER_IMAGE_TYPES[file.type];
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (!extensions || !extensions.includes(extension)) {
+    return "Use a JPEG, PNG, or WebP cover photo with a matching file extension.";
+  }
+  return null;
+}
+
 export interface CatalogueProductQuery {
   search?: string;
   category?: string;
@@ -90,11 +110,33 @@ export async function fetchAllAdminCatalogueProducts(
   return products;
 }
 
+function catalogueRequestData(payload: Partial<CatalogueProductPayload>) {
+  const coverImage = payload.cover_image;
+  if (typeof File === "undefined" || !(coverImage instanceof File)) {
+    return payload;
+  }
+
+  const data = new FormData();
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === "cover_image") {
+      data.append(key, value as File);
+    } else if (value !== undefined) {
+      // DRF interprets an empty multipart value as null for nullable fields.
+      // Preserve explicit nulls so PATCH can clear limits during a cover upload.
+      data.append(
+        key,
+        value === null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value),
+      );
+    }
+  }
+  return data;
+}
+
 export function createCatalogueProduct(
   payload: CatalogueProductPayload,
 ): Promise<CatalogueProduct> {
   return api
-    .post<CatalogueProduct>("/admin/catalogue/products/", payload)
+    .post<CatalogueProduct>("/admin/catalogue/products/", catalogueRequestData(payload))
     .then(({ data }) => data);
 }
 
@@ -103,7 +145,7 @@ export function updateCatalogueProduct(
   payload: Partial<CatalogueProductPayload>,
 ): Promise<CatalogueProduct> {
   return api
-    .patch<CatalogueProduct>(`/admin/catalogue/products/${id}/`, payload)
+    .patch<CatalogueProduct>(`/admin/catalogue/products/${id}/`, catalogueRequestData(payload))
     .then(({ data }) => data);
 }
 

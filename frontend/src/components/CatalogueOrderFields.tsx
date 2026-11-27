@@ -140,24 +140,37 @@ export default function CatalogueOrderFields({
             </div>
 
             {product && (
-              <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-medium">{product.name}</p>
-                  <span className="text-xs text-muted-foreground">{product.category}</span>
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  {product.cover_image_url && (
+                    <img
+                      src={product.cover_image_url}
+                      alt={`${product.name} cover photo`}
+                      loading="lazy"
+                      decoding="async"
+                      className="h-32 w-full rounded-md object-cover sm:h-24 sm:w-32 sm:shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">{product.name}</p>
+                      <span className="text-xs text-muted-foreground">{product.category}</span>
+                    </div>
+                    {product.description && (
+                      <p className="text-muted-foreground">{product.description}</p>
+                    )}
+                    <p className="font-medium">
+                      {formatPeso(product.price_peso)} per {product.unit_label}
+                    </p>
+                    {product.instructions && (
+                      <Alert>
+                        <AlertDescription className="whitespace-pre-line">
+                          {product.instructions}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
                 </div>
-                {product.description && (
-                  <p className="text-muted-foreground">{product.description}</p>
-                )}
-                <p className="font-medium">
-                  {formatPeso(product.price_peso)} per {product.unit_label}
-                </p>
-                {product.instructions && (
-                  <Alert>
-                    <AlertDescription className="whitespace-pre-line">
-                      {product.instructions}
-                    </AlertDescription>
-                  </Alert>
-                )}
               </div>
             )}
 
