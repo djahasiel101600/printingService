@@ -1,9 +1,13 @@
 import {
   CheckCircle2,
+  ExternalLink,
   FileText,
+  MapPin,
   Printer,
   QrCode,
   ShieldCheck,
+  Store,
+  UserRound,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -28,7 +32,7 @@ const STEPS = [
   {
     icon: Printer,
     title: "Printed and ready",
-    desc: "Your job goes to our Epson printer, and you can follow its progress until it's ready for pickup.",
+    desc: "Your job goes to our Epson printer, and you can follow its progress until it's ready for pickup at our shop.",
   },
 ];
 
@@ -37,6 +41,19 @@ const ASSURANCES = [
   "Every job reviewed by a person",
   "Track your order anytime",
 ];
+
+// Shop details live in one place so the hero, the visit section and any
+// future footer or contact page can't drift apart.
+const SHOP = {
+  name: "Dela Pena's Store",
+  owner: "Melanie Dela Pena",
+  addressLines: ["Purok 1, Santa Ana", "Tubay, Agusan del Norte"],
+  // One-line form for the map search.
+  fullAddress: "Dela Pena's Store, Purok 1, Santa Ana, Tubay, Agusan del Norte",
+};
+const SHOP_MAP_URL = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+  SHOP.fullAddress,
+)}`;
 
 // Product walkthrough clip (hosted by demosmith). Swap this one constant if the
 // video is re-recorded — nothing else on the page depends on it.
@@ -86,6 +103,17 @@ export default function HomePage() {
             </li>
           ))}
         </ul>
+
+        {/* Who is behind it, and where, right where first-time visitors look. */}
+        <p className="mt-6 flex items-start gap-2 border-t pt-5 text-sm text-muted-foreground sm:items-center">
+          <MapPin
+            aria-hidden
+            className="mt-0.5 h-4 w-4 shrink-0 text-primary sm:mt-0"
+          />
+          <span>
+            Printed at {SHOP.name} in Santa Ana, Tubay, Agusan del Norte.
+          </span>
+        </p>
       </section>
 
       {/* ---------------------------------------------------- walkthrough */}
@@ -143,6 +171,73 @@ export default function HomePage() {
             </li>
           ))}
         </ol>
+      </section>
+
+      {/* ------------------------------------------------------- visit the shop */}
+      <section aria-labelledby="visit-title">
+        <h2 id="visit-title" className="text-2xl font-semibold tracking-tight">
+          Visit the shop
+        </h2>
+        <p className="mt-1 text-muted-foreground">
+          Your prints are made, and picked up, here.
+        </p>
+
+        <div className="mt-6 grid gap-6 rounded-2xl border bg-card p-6 shadow-sm sm:grid-cols-[1fr_auto] sm:items-center sm:p-8">
+          <dl className="space-y-5">
+            <div className="flex items-start gap-3">
+              <Store
+                aria-hidden
+                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+              />
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  Printing shop
+                </dt>
+                <dd className="font-semibold">{SHOP.name}</dd>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <UserRound
+                aria-hidden
+                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+              />
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  Owner
+                </dt>
+                <dd className="font-semibold">{SHOP.owner}</dd>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <MapPin
+                aria-hidden
+                className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+              />
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  Address
+                </dt>
+                <dd>
+                  <address className="not-italic">
+                    {SHOP.addressLines.map((line) => (
+                      <span key={line} className="block font-semibold">
+                        {line}
+                      </span>
+                    ))}
+                  </address>
+                </dd>
+              </div>
+            </div>
+          </dl>
+
+          <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
+            <a href={SHOP_MAP_URL} target="_blank" rel="noopener noreferrer">
+              <ExternalLink aria-hidden className="mr-2 h-4 w-4" />
+              Open in Maps
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          </Button>
+        </div>
       </section>
 
       {/* ----------------------------------------------------- closing prompt */}
