@@ -66,6 +66,8 @@ class Order(models.Model):
     payment_method = models.CharField(max_length=16, choices=PaymentMethod.choices, blank=True)
 
     subtotal = models.PositiveIntegerField(default=0, help_text="Centavos")
+    # Itemised color/mono lines behind the current subtotal.
+    quote_breakdown = models.JSONField(default=list, blank=True)
     amount_paid = models.PositiveIntegerField(default=0, help_text="Centavos")
 
     admin_notes = models.TextField(blank=True, help_text="Internal notes, never shown to clients")
@@ -152,6 +154,8 @@ class Order(models.Model):
             notify_status_change(self, old, new_status, note)
 
     def quote_specs(self) -> list[dict]:
+        from .services.color_analysis import effective_page_modes
+
         specs = []
         for order_file in self.files.all():
             spec = getattr(order_file, "specification", None)
@@ -166,6 +170,7 @@ class Order(models.Model):
                 "print_quality": spec.print_quality if spec else "normal",
                 "sides": spec.sides if spec else "none",
                 "copies": spec.copies if spec else 1,
+                "page_modes": [mode for _, mode in effective_page_modes(order_file, spec)],
             })
         return specs
 
@@ -242,6 +247,10 @@ class OrderFile(models.Model):
     content_type = models.CharField(max_length=100, blank=True)
     size = models.PositiveIntegerField(default=0)
     page_count = models.PositiveIntegerField(default=1)
+    # Visible-colour analysis of the current source, plus deliberate staff
+    # overrides used only when the specification's color_mode is ``auto``.
+    color_analysis = models.JSONField(default=dict, blank=True)
+    color_page_overrides = models.JSONField(default=dict, blank=True)
     # Chronological metadata of applied edits: [{action: crop|split|resize|center, ...args}]
     edit_actions = models.JSONField(default=list, blank=True)
     # 1-based page numbers the admin kept, e.g. [1, 2, 5]. An empty list means
@@ -407,7 +416,7 @@ class PrintSpecification(models.Model):
 
     media_size = models.CharField(max_length=32, default="ps_a4")
     media_type = models.CharField(max_length=32, default="pt_plainpaper")
-    color_mode = models.CharField(max_length=16, default="mono")          # color | mono
+    color_mode = models.CharField(max_length=16, default="mono")          # color | mono | auto
     sides = models.CharField(max_length=8, default="none")                # none | long | short
     print_quality = models.CharField(max_length=16, default="normal")     # draft | normal | high
     copies = models.PositiveSmallIntegerField(default=1)

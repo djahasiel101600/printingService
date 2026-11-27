@@ -24,12 +24,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/components/auth";
 import SpecFields, { DEFAULT_SPEC } from "@/components/SpecFields";
+import QuoteBreakdown from "@/components/QuoteBreakdown";
 import { GuestDetailsCard, type GuestMethod } from "@/pages/NewOrderPage";
 import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
-import { formatBytes, paperSizeLabel, qualityLabel } from "@/lib/constants";
+import { colorModeLabel, formatBytes, paperSizeLabel, qualityLabel } from "@/lib/constants";
+import { quoteFilesFromEstimate } from "@/lib/quotes";
 import type {
   Capabilities,
   CheckoutResponse,
+  EstimateFile,
   EstimateResponse,
   Order,
   PrintSpecification,
@@ -117,8 +120,7 @@ export default function QuickPrintPage() {
   // Debounced so chips/steppers don't hammer POST /orders/quote/.
   interface QuoteInput {
     spec: PrintSpecification;
-    pageCounts: number[];
-    labels: string[];
+    files: EstimateFile[];
   }
   const [quoteInput, setQuoteInput] = useState<QuoteInput | null>(null);
   useEffect(() => {
@@ -128,8 +130,7 @@ export default function QuickPrintPage() {
     }
     const next: QuoteInput = {
       spec,
-      pageCounts: estimate.files.map((f) => f.page_count),
-      labels: estimate.files.map((f) => f.name),
+      files: estimate.files,
     };
     const timer = setTimeout(() => setQuoteInput(next), 350);
     return () => clearTimeout(timer);
@@ -140,16 +141,7 @@ export default function QuickPrintPage() {
     enabled: quoteInput !== null,
     queryFn: async () => {
       if (!quoteInput) return null;
-      const specs = quoteInput.pageCounts.map((page_count, index) => ({
-        page_count,
-        label: quoteInput.labels[index] ?? `File ${index + 1}`,
-        media_size: quoteInput.spec.media_size,
-        media_type: quoteInput.spec.media_type,
-        color_mode: quoteInput.spec.color_mode,
-        print_quality: quoteInput.spec.print_quality,
-        sides: quoteInput.spec.sides,
-        copies: quoteInput.spec.copies,
-      }));
+      const specs = quoteFilesFromEstimate(quoteInput.spec, quoteInput.files);
       const { data } = await api.post<Quote>("/orders/quote/", { files: specs });
       return data;
     },
@@ -578,15 +570,16 @@ export default function QuickPrintPage() {
             <CardHeader>
               <CardTitle>Print settings</CardTitle>
               <CardDescription>
-                Black &amp; white or color, paper, copies and sides — the price updates as you go.
+                Black &amp; white, color or automatic per-page detection — the price updates as you go.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               {/* color toggle cards */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 {([
                   { value: "mono", title: "Black & white", hint: "Cheapest" },
                   { value: "color", title: "Color", hint: "Full color" },
+                  { value: "auto", title: "Auto", hint: "Per page" },
                 ] as const).map((option) => (
                   <button
                     key={option.value}
@@ -726,7 +719,7 @@ export default function QuickPrintPage() {
                       <Skeleton className="h-40 w-full" />
                     ) : (
                       <SpecFields capabilities={capabilities} value={spec} onChange={setSpec}
-                        showOrientation={hasImages} />
+                        section="advanced" showOrientation={hasImages} />
                     )}
                   </div>
                 )}
@@ -739,19 +732,22 @@ export default function QuickPrintPage() {
             {quoteQuery.isFetching ? (
               <p className="text-sm text-muted-foreground">Updating price…</p>
             ) : quote ? (
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs text-muted-foreground">Estimated total</p>
-                  <p className="text-2xl font-bold">₱{quote.subtotal_peso.toFixed(2)}</p>
+              <>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Estimated total</p>
+                    <p className="text-2xl font-bold">₱{quote.subtotal_peso.toFixed(2)}</p>
+                  </div>
+                  <p className="text-right text-xs text-muted-foreground">
+                    {estimate?.total_pages ?? 0} page{estimate?.total_pages === 1 ? "" : "s"} ×{" "}
+                    {spec.copies} cop{spec.copies === 1 ? "y" : "ies"}
+                    <br />
+                    {colorModeLabel(spec.color_mode)} ·{" "}
+                    {spec.sides === "none" ? "single-sided" : "double-sided"}
+                  </p>
                 </div>
-                <p className="text-right text-xs text-muted-foreground">
-                  {estimate?.total_pages ?? 0} page{estimate?.total_pages === 1 ? "" : "s"} ×{" "}
-                  {spec.copies} cop{spec.copies === 1 ? "y" : "ies"}
-                  <br />
-                  {spec.color_mode === "color" ? "Color" : "Black & white"} ·{" "}
-                  {spec.sides === "none" ? "single-sided" : "double-sided"}
-                </p>
-              </div>
+                <QuoteBreakdown lines={quote.lines} className="mt-3" />
+              </>
             ) : (
               <p className="text-sm text-muted-foreground">
                 The price appears here as soon as it's quoted.
@@ -918,7 +914,7 @@ export default function QuickPrintPage() {
                 <p className="mb-1 font-medium">Print settings</p>
                 <p className="text-muted-foreground">
                   {paperSizeLabel(spec.media_size)} ·{" "}
-                  {spec.color_mode === "color" ? "Color" : "Black & white"} ·{" "}
+                  {colorModeLabel(spec.color_mode)} ·{" "}
                   {qualityLabel(spec.print_quality).split(" (")[0]} ·{" "}
                   {spec.sides === "none" ? "single-sided" : "double-sided"} · {spec.copies} cop
                   {spec.copies === 1 ? "y" : "ies"}
@@ -951,6 +947,7 @@ export default function QuickPrintPage() {
                 </p>
               </div>
               <Separator />
+              {quote && <QuoteBreakdown lines={quote.lines} />}
               <div className="flex items-center justify-between">
                 <span className="font-medium">Total</span>
                 <span className="text-2xl font-bold">

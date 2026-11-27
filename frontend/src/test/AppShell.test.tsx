@@ -51,7 +51,7 @@ describe("AppShell navigation by role", () => {
 
     expect(screen.getByRole("link", { name: /new order/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /track order/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /my orders/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /my orders/i })).not.toBeInTheDocument();
 
     expect(screen.queryByRole("link", { name: /^admin$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
@@ -81,7 +81,8 @@ describe("AppShell navigation by role", () => {
     expect(screen.queryByRole("link", { name: /^staff$/i })).not.toBeInTheDocument();
   });
 
-  it("gives a shop admin every staff destination", () => {
+  it("gives a shop admin every staff destination", async () => {
+    const user = userEvent.setup();
     authState.user = makeUser({
       role: "admin",
       is_shop_admin: true,
@@ -90,11 +91,13 @@ describe("AppShell navigation by role", () => {
     });
     renderShell();
 
-    expect(screen.getByRole("link", { name: /review queue/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /pricing/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^staff$/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /api settings/i })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /new order for customer/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /staff tools/i }));
+
+    expect(screen.getByRole("menuitem", { name: /review queue/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /pricing/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^staff$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /api settings/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /create order for customer/i })).toBeInTheDocument();
   });
 
   it("offers sign-in when logged out", () => {
@@ -143,9 +146,9 @@ describe("AppShell mobile navigation", () => {
 
     const drawer = await screen.findByRole("dialog");
     expect(drawer).toBeInTheDocument();
-    // The drawer carries the same destinations as the desktop bar. Names are
-    // anchored because "New Order" also prefixes "New Order for Customer".
-    expect(within(drawer).getByRole("link", { name: /^new order$/i })).toBeInTheDocument();
+    // Shop admins use the staff creation flow rather than the customer-only
+    // New order destination.
+    expect(within(drawer).getByRole("link", { name: /create order for customer/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /review queue/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /pricing/i })).toBeInTheDocument();
   });

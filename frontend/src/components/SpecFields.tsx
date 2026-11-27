@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Contrast, Palette } from "lucide-react";
+import { ChevronDown, ChevronUp, Contrast, Palette, Sparkles } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 
@@ -138,12 +138,12 @@ export default function SpecFields({
   // ------------------------------------------------------------------ basic
   const colorField = (
     <div className="space-y-1.5">
-      <Label id="color-label">Color</Label>
+      <Label id="color-label">Color mode</Label>
       <RadioGroup
         aria-labelledby="color-label"
         value={value.color_mode}
-        onValueChange={(v) => update("color_mode", v as "color" | "mono")}
-        className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+        onValueChange={(v) => update("color_mode", v as PrintSpecification["color_mode"])}
+        className="grid grid-cols-1 gap-2 sm:grid-cols-3"
       >
         <ChoiceCard
           id="cm-mono"
@@ -160,6 +160,14 @@ export default function SpecFields({
           title="Color"
           hint="Photos, charts and presentations"
           icon={<Palette className="h-4 w-4" aria-hidden="true" />}
+        />
+        <ChoiceCard
+          id="cm-auto"
+          value="auto"
+          selected={value.color_mode === "auto"}
+          title="Auto (per page)"
+          hint="Detect color page by page; unclear pages use color"
+          icon={<Sparkles className="h-4 w-4" aria-hidden="true" />}
         />
       </RadioGroup>
     </div>

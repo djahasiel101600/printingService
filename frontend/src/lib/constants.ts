@@ -1,4 +1,4 @@
-import type { OrderStatus } from "./types";
+import type { OrderStatus, PrintColorMode } from "./types";
 
 /**
  * How loud a status is allowed to look. Tones are semantic tokens, so status
@@ -386,4 +386,14 @@ export function qualityLabel(code: string): string {
 
 export function sidesLabel(code: string): string {
   return SIDES_LABELS[code] ?? code;
+}
+
+export const COLOR_MODE_LABELS: Record<PrintColorMode, string> = {
+  auto: "Auto (per page)",
+  mono: "Black & white",
+  color: "Color",
+};
+
+export function colorModeLabel(code: string): string {
+  return COLOR_MODE_LABELS[code as PrintColorMode] ?? code;
 }

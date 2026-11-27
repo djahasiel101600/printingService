@@ -28,6 +28,7 @@ class LineQuote:
     unit_price: int          # centavos per printed side
     sides: int               # total printed sides
     amount: int              # centavos
+    color_mode: str = "mono"  # concrete mode; ``auto`` is expanded below
 
 
 @dataclass
@@ -86,31 +87,73 @@ def find_rule(media_size: str, media_type: str, color_mode: str, print_quality: 
 
 
 
+def _page_modes(spec: dict, page_count: int) -> list[str]:
+    """Normalise per-page modes; absent or invalid entries are safely color."""
+    raw = spec.get("page_modes")
+    if raw is None:
+        analysis = spec.get("color_analysis") or {}
+        raw = [entry.get("mode") for entry in analysis.get("pages") or []]
+    if isinstance(raw, dict):
+        raw = [raw.get(str(number), raw.get(number)) for number in range(1, page_count + 1)]
+    if not isinstance(raw, (list, tuple)):
+        raw = []
+    return [
+        mode if mode in ("color", "mono") else "color"
+        for mode in list(raw[:page_count]) + ["color"] * max(0, page_count - len(raw))
+    ]
+
+
 def compute_quote(specs: list[dict]) -> Quote:
-    """specs: [{'media_size','media_type','color_mode','print_quality',
-    'sides','copies','page_count','label'}...] — sides uses Epson values
-    (none|long|short). Global knobs (duplex factor, fallback price) come from
-    the admin-editable PricingSettings singleton (DB), not env vars."""
+    """Compute concrete per-side lines, expanding ``auto`` into color/mono.
+
+    ``page_modes`` is either a list in page order or a mapping of page numbers
+    to modes. Missing analysis is deliberately charged as color. Global knobs
+    (duplex factor, fallback price) come from PricingSettings.
+    """
     knobs = PricingSettings.get_solo()
     lines: list[LineQuote] = []
     for spec in specs:
         page_count = max(1, int(spec.get("page_count") or 1))
         copies = min(99, max(1, int(spec.get("copies") or 1)))
-        color_mode = spec.get("color_mode") or "mono"
+        requested = spec.get("color_mode") or "mono"
         media_size = spec.get("media_size") or "any"
         media_type = spec.get("media_type") or "any"
         print_quality = spec.get("print_quality") or "any"
         double_sided = spec.get("sides") in ("long", "short")
+        label = spec.get("label") or "Print job"
 
-        rule = find_rule(media_size, media_type, color_mode, print_quality)
-        unit_price = rule.price_per_page if rule else knobs.fallback_price_per_side
-        if double_sided:
-            unit_price = round(unit_price * knobs.duplex_discount_factor)
-        sides = page_count * copies
-        amount = sides * unit_price
-        lines.append(LineQuote(
-            label=spec.get("label") or "Print job",
-            pages=page_count, copies=copies,
-            unit_price=unit_price, sides=sides, amount=amount,
-        ))
+        if requested == "auto":
+            modes = _page_modes(spec, page_count)
+            groups = []
+            for mode in ("mono", "color"):
+                count = modes.count(mode)
+                if count:
+                    groups.append((mode, count))
+        else:
+            mode = requested if requested in ("color", "mono") else "color"
+            groups = [(mode, page_count)]
+
+        for mode, count in groups:
+            rule = find_rule(media_size, media_type, mode, print_quality)
+            unit_price = rule.price_per_page if rule else knobs.fallback_price_per_side
+            if double_sided:
+                unit_price = round(unit_price * knobs.duplex_discount_factor)
+            sides = count * copies
+            line_label = label
+            if requested == "auto" and len(groups) > 1:
+                line_label += " — Color" if mode == "color" else " — Black & white"
+            lines.append(LineQuote(
+                label=line_label, pages=count, copies=copies,
+                unit_price=unit_price, sides=sides, amount=sides * unit_price,
+                color_mode=mode,
+            ))
     return Quote(lines=lines, subtotal=sum(line.amount for line in lines))
+
+
+def line_quote_data(line: LineQuote) -> dict:
+    return {
+        "label": line.label, "pages": line.pages, "copies": line.copies,
+        "color_mode": line.color_mode,
+        "unit_price": line.unit_price, "unit_price_peso": line.unit_price / 100,
+        "sides": line.sides, "amount": line.amount, "amount_peso": line.amount / 100,
+    }

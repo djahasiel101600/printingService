@@ -14,12 +14,13 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 from apps.pricing.models import PricingSettings
-from apps.pricing.quotation import compute_quote
+from apps.pricing.quotation import compute_quote, line_quote_data
 from apps.pricing.views import IsShopAdmin, IsShopStaff
 from apps.activitylog.services import log_activity
 from apps.printing.models import PrintJob
 from apps.printing.services import (
-    printable_files, submit_order_to_printer, sync_print_jobs, unprintable_files,
+    ACTIVE_JOB_STATUSES, printable_files, submit_order_to_printer, sync_print_jobs,
+    unprintable_files,
 )
 
 from .models import (
@@ -27,7 +28,14 @@ from .models import (
     Order, OrderFile, OrderFileVersion, OrderStatusHistory, PrintSpecification, file_extension,
     format_page_selection,
 )
-from .serializers import AdminOrderSerializer, GuestContactSerializer, OrderSerializer, PrintSpecificationSerializer
+from .serializers import (
+    AdminOrderSerializer, GuestContactSerializer, OrderFileSerializer,
+    OrderSerializer, PrintSpecificationSerializer,
+)
+from .services.color_analysis import (
+    analyze_document_pages, analyze_image, analyze_pdf, ensure_order_file_analysis,
+)
+from .services.repricing import reprice_order
 from .services.document_preview import PreviewError, build_preview
 from .services.file_edits import FileEditError, apply_edit, count_pages, select_pages
 from .services.print_prep import (
@@ -42,14 +50,7 @@ EDITABLE_STATUSES = (
 
 
 def _quote_lines(quote) -> list[dict]:
-    return [
-        {
-            "label": line.label, "pages": line.pages, "copies": line.copies,
-            "unit_price": line.unit_price, "unit_price_peso": line.unit_price / 100,
-            "sides": line.sides, "amount": line.amount, "amount_peso": line.amount / 100,
-        }
-        for line in quote.lines
-    ]
+    return [line_quote_data(line) for line in quote.lines]
 
 
 def _quote_response(quote) -> dict:
@@ -194,10 +195,10 @@ class OrderCreateView(APIView):
             order.delete()
             return Response({"detail": "; ".join(errors) or "No valid files uploaded."}, status=400)
 
-        order.subtotal = compute_quote(order.quote_specs()).subtotal
+        quote = reprice_order(order)
         order.set_status(Order.Status.AWAITING_PAYMENT, note="Order submitted, awaiting payment")
         return Response(
-            {"order": OrderSerializer(order).data, "quote": _quote_response(compute_quote(order.quote_specs()))},
+            {"order": OrderSerializer(order).data, "quote": _quote_response(quote)},
             status=status.HTTP_201_CREATED,
         )
 
@@ -288,11 +289,18 @@ class OrderEstimateView(APIView):
             except FileEditError as exc:
                 errors.append(f"{uploaded.name}: {exc}")
                 continue
+            if file_type == OrderFile.FileType.PDF:
+                analysis = analyze_pdf(content, page_count=page_count)
+            elif file_type == OrderFile.FileType.IMAGE:
+                analysis = analyze_image(content)
+            else:
+                analysis = analyze_document_pages(page_count)
             estimates.append({
                 "name": uploaded.name,
                 "file_type": file_type.value,
                 "page_count": page_count,
                 "size": uploaded.size,
+                "color_analysis": analysis,
                 # Documents are counted too, but they only become printable
                 # once the shop renders or converts them (OrderFile.print_ready).
                 "print_ready": file_type in {OrderFile.FileType.PDF, OrderFile.FileType.IMAGE},
@@ -373,10 +381,8 @@ class OrderFileEditView(APIView):
         except FileEditError as exc:
             return Response({"detail": str(exc)}, status=400)
 
-        # Re-price the order while payment has not started.
-        if order.status != Order.Status.PENDING_REVIEW:
-            order.subtotal = compute_quote(order.quote_specs()).subtotal
-            order.save(update_fields=["subtotal"])
+        ensure_order_file_analysis(order_file)
+        reprice_order(order)
         return Response(OrderSerializer(order).data)
 
 
@@ -692,10 +698,10 @@ class AdminOrderActionView(APIView):
                     + ". The printer only accepts PDF and image files."
                 )}, status=409)
             order.set_status(Order.Status.APPROVED_QUEUED, note=note, actor=request.user)
-            submit_order_to_printer(order)
+            jobs = submit_order_to_printer(order)
             order.refresh_from_db()
-            failed = [j for j in order.print_jobs.all() if j.status == "failed"]
-            if failed and len(failed) == order.print_jobs.count():
+            failed = [j for j in jobs if j.status == "failed"]
+            if failed and len(failed) == len(jobs):
                 order.set_status(Order.Status.ON_HOLD,
                                  note=f"All print jobs failed to submit: {failed[0].error_message}",
                                  actor=request.user)
@@ -728,6 +734,11 @@ class AdminOrderActionView(APIView):
                              actor=request.user)
             sync_print_jobs(order)
         elif action == "ready":
+            if order.print_jobs.filter(status__in=ACTIVE_JOB_STATUSES).exists():
+                return Response(
+                    {"detail": "Wait for all Epson jobs to finish before marking this order ready."},
+                    status=409,
+                )
             order.set_status(Order.Status.PRINTED_READY, note=note or "Ready for pickup", actor=request.user)
         elif action == "complete":
             order.set_status(Order.Status.COMPLETED, note=note or "Picked up and settled", actor=request.user)
@@ -904,12 +915,8 @@ class OrderFileReuploadView(APIView):
             order_file.save()
 
         order.refresh_from_db()
-        # Re-price while payment has not started, matching the edit endpoint.
-        # (The revision flow always follows a paid order, so this is normally
-        # a no-op — kept for consistency, never a charge path.)
-        if order.status != Order.Status.PENDING_REVIEW:
-            order.subtotal = compute_quote(order.quote_specs()).subtotal
-            order.save(update_fields=["subtotal"])
+        ensure_order_file_analysis(order_file)
+        reprice_order(order)
         OrderStatusHistory.objects.create(
             order=order, from_status=order.status, to_status=order.status,
             note=f"Client uploaded v{order_file.current_version} of '{upload.name}'",
@@ -969,13 +976,59 @@ class AdminOrderSpecView(APIView):
                 rebuild_print_file(spec.order_file)
             except FileEditError as exc:
                 return Response({"detail": str(exc)}, status=400)
-        order.subtotal = compute_quote(order.quote_specs()).subtotal
-        order.save(update_fields=["subtotal"])
+        if spec.order_file:
+            ensure_order_file_analysis(spec.order_file)
+        reprice_order(order)
         log_activity(request.user, "order.spec", object_type="order",
                      object_repr=order.tracking_id, object_id=order.pk,
                      detail=f"File spec updated: "
                             f"{spec.order_file.file_name if spec.order_file else 'order'}.")
         return Response(AdminOrderSerializer(order).data)
+
+
+class AdminOrderFileColorView(APIView):
+    """Override detected page modes or rerun visible-colour analysis."""
+
+    permission_classes = [permissions.IsAuthenticated, IsShopStaff]
+
+    def patch(self, request, order_pk, file_pk):
+        order = get_object_or_404(Order, pk=order_pk)
+        order_file = get_object_or_404(OrderFile, pk=file_pk, order=order)
+        reanalyze = request.data.get("reanalyze", False)
+        if not isinstance(reanalyze, bool):
+            return Response({"detail": "reanalyze must be true or false."}, status=400)
+
+        overrides = request.data.get("overrides")
+        normalized = {}
+        if overrides is not None:
+            if not isinstance(overrides, dict):
+                return Response({"detail": "overrides must map page numbers to color or mono."}, status=400)
+            for raw_page, mode in overrides.items():
+                try:
+                    page = int(raw_page)
+                except (TypeError, ValueError):
+                    return Response({"detail": f"Invalid page number: {raw_page}."}, status=400)
+                if str(page) != str(raw_page) or not 1 <= page <= order_file.page_count:
+                    return Response({"detail": f"Page {raw_page} is outside this file."}, status=400)
+                if mode not in ("color", "mono"):
+                    return Response({"detail": f"Page {page} must be color or mono."}, status=400)
+                normalized[str(page)] = mode
+
+        ensure_order_file_analysis(order_file, force=reanalyze)
+        if overrides is not None:
+            order_file.color_page_overrides = normalized
+            order_file.save(update_fields=["color_page_overrides"])
+        reprice_order(order)
+        order.refresh_from_db()
+        log_activity(
+            request.user, "order.color", object_type="order",
+            object_repr=order.tracking_id, object_id=order.pk,
+            detail=f"Page colour updated: {order_file.file_name}.",
+        )
+        return Response({
+            "order": AdminOrderSerializer(order).data,
+            "file": OrderFileSerializer(order_file).data,
+        })
 
 
 class AdminOrderNotesView(APIView):
@@ -1030,8 +1083,8 @@ class AdminOrderFilePagesView(APIView):
             return Response({"detail": str(exc)}, status=400)
 
         order.refresh_from_db()
-        order.subtotal = compute_quote(order.quote_specs()).subtotal
-        order.save(update_fields=["subtotal"])
+        ensure_order_file_analysis(order_file)
+        reprice_order(order)
         log_activity(request.user, "order.pages", object_type="order",
                      object_repr=order.tracking_id, object_id=order.pk,
                      detail=f"Page selection: {order_file.page_selection_label}")
@@ -1104,8 +1157,8 @@ class AdminOrderFileReplaceView(APIView):
         order_file.save(update_fields=["page_count"])
 
         order.refresh_from_db()
-        order.subtotal = compute_quote(order.quote_specs()).subtotal
-        order.save(update_fields=["subtotal"])
+        ensure_order_file_analysis(order_file)
+        reprice_order(order)
         OrderStatusHistory.objects.create(
             order=order, from_status=order.status, to_status=order.status,
             note=f"Shop replaced '{order_file.file_name}' with a converted PDF",

@@ -7,10 +7,12 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PageSelector from "@/components/PageSelector";
-import { formatBytes, formatPageRange, orientationLabel } from "@/lib/constants";
+import PageColorReview from "@/components/PageColorReview";
+import { colorModeLabel, formatBytes, formatPageRange, orientationLabel } from "@/lib/constants";
 import { api, apiErrorMessage } from "@/lib/api";
-import type { Order, OrderFile } from "@/lib/types";
+import type { Order, OrderFile, PrintColorMode } from "@/lib/types";
 
 interface FileReviewCardProps {
   order: Order;
@@ -87,6 +89,22 @@ export default function FileReviewCard({
     onError: (err) => toast.error(apiErrorMessage(err)),
   });
 
+  const colorModeMutation = useMutation({
+    mutationFn: async (color_mode: PrintColorMode) => {
+      const specId = file.specification?.id;
+      if (!specId) throw new Error("This file has no print settings.");
+      const { data } = await api.patch<Order>(
+        `/admin/orders/${order.id}/specs/${specId}/`, { color_mode });
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(["admin-order", String(order.id)], data);
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+      toast.success("Color mode updated — the quote was recalculated.");
+    },
+    onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
 return (
     <div className="rounded-lg border">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b bg-muted/40 p-3">
@@ -121,13 +139,33 @@ return (
             {spec && (
               <p className="mt-1 text-xs text-muted-foreground">
                 {spec.media_size.replace("ps_", "").toUpperCase()} · {spec.media_type.replace("pt_", "")} ·{" "}
-                {spec.color_mode === "color" ? "Colour" : "B&W"} ·{" "}
+                {colorModeLabel(spec.color_mode)} ·{" "}
                 {spec.copies} cop{spec.copies === 1 ? "y" : "ies"} ·{" "}
                 {spec.sides === "none" ? "single-sided" : "double-sided"}
                 {file.file_type === "image" && spec.orientation && (
                   <span> · {orientationLabel(spec.orientation)}</span>
                 )}
               </p>
+            )}
+
+            {spec && (
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Color mode:</span>
+                <Select
+                  value={spec.color_mode}
+                  onValueChange={(value) => colorModeMutation.mutate(value as PrintColorMode)}
+                  disabled={locked || colorModeMutation.isPending}
+                >
+                  <SelectTrigger className="h-7 w-40 text-xs" aria-label="File color mode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (per page)</SelectItem>
+                    <SelectItem value="mono">Black &amp; white</SelectItem>
+                    <SelectItem value="color">Color</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             )}
 
             {/* Picture files can be flipped between portrait and landscape. */}
@@ -139,7 +177,7 @@ return (
                     key={option}
                     type="button"
                     onClick={() => orientationMutation.mutate(option)}
-                    disabled={orientationMutation.isPending}
+                    disabled={locked || orientationMutation.isPending}
                     aria-pressed={(spec.orientation ?? "portrait") === option}
                     className={`rounded border px-2 py-0.5 text-xs transition-colors ${
                       (spec.orientation ?? "portrait") === option
@@ -227,6 +265,10 @@ return (
               ))}
             </ul>
           </details>
+        )}
+
+        {spec?.color_mode === "auto" && (
+          <PageColorReview order={order} file={file} disabled={locked} />
         )}
 
         {(file.file_type === "pdf" || file.file_type === "document") && file.page_count > 1 && (

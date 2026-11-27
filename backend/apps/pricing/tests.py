@@ -121,6 +121,32 @@ class PricingSettingsEndpointTests(TestCase):
         quote = compute_quote([{**SPEC, "copies": 2}])
         self.assertEqual(quote.subtotal, 4 * 2 * 250)
 
+    def test_auto_quote_itemises_color_and_mono_pages(self):
+        PriceRule.objects.create(media_size="ps_a4", media_type="pt_plainpaper",
+                                 color_mode="mono", print_quality="normal",
+                                 price_per_page=300)
+        PriceRule.objects.create(media_size="ps_a4", media_type="pt_plainpaper",
+                                 color_mode="color", print_quality="normal",
+                                 price_per_page=600)
+        quote = compute_quote([{
+            **SPEC, "page_count": 3, "copies": 2, "color_mode": "auto",
+            "page_modes": ["mono", "color", "mono"],
+        }])
+        self.assertEqual(quote.subtotal, (2 * 300 + 1 * 600) * 2)
+        self.assertEqual([line.color_mode for line in quote.lines], ["mono", "color"])
+        self.assertEqual([line.pages for line in quote.lines], [2, 1])
+
+    def test_auto_quote_charges_missing_or_invalid_modes_as_color(self):
+        PriceRule.objects.create(media_size="ps_a4", media_type="pt_plainpaper",
+                                 color_mode="color", print_quality="normal",
+                                 price_per_page=600)
+        quote = compute_quote([{
+            **SPEC, "page_count": 2, "color_mode": "auto",
+            "page_modes": ["invalid"],
+        }])
+        self.assertEqual(quote.subtotal, 2 * 600)
+        self.assertEqual([line.color_mode for line in quote.lines], ["color"])
+
     def test_quote_endpoint_min_partial_is_pesos_from_db(self):
         knob = PricingSettings.get_solo()
         knob.min_partial_percent = 25

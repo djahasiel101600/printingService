@@ -15,12 +15,45 @@ export type OrderStatus =
 
 export type FileVariant = "original" | "edited" | "final";
 
+export type PageColorMode = "color" | "mono";
+export type PrintColorMode = PageColorMode | "auto";
+
+export interface ColorAnalysisPage {
+  page: number;
+  mode: PageColorMode;
+  analyzed: boolean;
+  color_ratio: number;
+  max_chroma: number;
+  confidence: string;
+}
+
+export interface ColorAnalysis {
+  version?: number;
+  dpi?: number;
+  source?: string;
+  pages: ColorAnalysisPage[];
+  complete: boolean;
+  warning: string;
+  note?: string;
+}
+
+export interface EffectivePageMode {
+  page: number;
+  mode: PageColorMode;
+}
+
+export interface PrintSettingsSnapshot {
+  colorMode?: PageColorMode;
+  copies?: number;
+  [key: string]: unknown;
+}
+
 export interface PrintSpecification {
   id?: number;
   order_file?: number | null;
   media_size: string;
   media_type: string;
-  color_mode: "color" | "mono";
+  color_mode: PrintColorMode;
   sides: "none" | "long" | "short";
   print_quality: "draft" | "normal" | "high";
   copies: number;
@@ -78,6 +111,12 @@ export interface OrderFile {
   print_ready: boolean;
   /** e.g. "595×841 mm sheet, 566×813 mm printable area (5 mm margins)". */
   print_area: string;
+  color_analysis: ColorAnalysis;
+  color_page_overrides: Record<string, PageColorMode>;
+  effective_page_modes: EffectivePageMode[];
+  detected_color_pages: number;
+  detected_mono_pages: number;
+  unanalyzed_pages: number;
   specification?: PrintSpecification;
   uploaded_at: string;
 }
@@ -115,6 +154,11 @@ export interface PrintJob {
   /** Pages sent for this run (empty = every page). */
   pages_snapshot: number[];
   pages_label: string;
+  print_settings_snapshot: PrintSettingsSnapshot;
+  run_id: string;
+  segment_index: number;
+  copy_index: number;
+  segment_count: number;
   is_reprint: boolean;
   /** True when the printer dropped the job rather than the shop or client. */
   is_printer_cancelled: boolean;
@@ -137,6 +181,7 @@ export interface Order {
   guest_contact_value: string;
   subtotal: number;
   subtotal_peso: number;
+  quote_breakdown: QuoteLine[];
   min_partial_peso: number;
   amount_paid: number;
   amount_paid_peso: number;
@@ -156,6 +201,7 @@ export interface Order {
 
 export interface QuoteLine {
   label: string;
+  color_mode: PageColorMode;
   pages: number;
   copies: number;
   unit_price: number;
@@ -317,6 +363,7 @@ export interface EstimateFile {
   page_count: number;
   size: number;
   print_ready: boolean;
+  color_analysis: ColorAnalysis;
 }
 
 export interface EstimateResponse {

@@ -44,15 +44,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
 import {
+  colorModeLabel,
   formatBytes,
   paperSizeLabel,
   paperTypeLabel,
   qualityLabel,
   sidesLabel,
 } from "@/lib/constants";
+import QuoteBreakdown from "@/components/QuoteBreakdown";
+import { quoteFilesFromEstimate } from "@/lib/quotes";
 import type {
   Capabilities,
   CustomerOption,
+  EstimateFile,
   EstimateResponse,
   Order,
   PrintSpecification,
@@ -331,8 +335,7 @@ export default function NewOrderPage({
   // Debounced quote input: spec + real page counts from the estimate.
   interface QuoteInput {
     spec: PrintSpecification;
-    pageCounts: number[];
-    labels: string[];
+    files: EstimateFile[];
   }
   const [quoteInput, setQuoteInput] = useState<QuoteInput | null>(null);
   useEffect(() => {
@@ -342,8 +345,7 @@ export default function NewOrderPage({
     }
     const next: QuoteInput = {
       spec,
-      pageCounts: estimate.files.map((f) => f.page_count),
-      labels: estimate.files.map((f) => f.name),
+      files: estimate.files,
     };
     const timer = setTimeout(() => setQuoteInput(next), 350);
     return () => clearTimeout(timer);
@@ -354,16 +356,7 @@ export default function NewOrderPage({
     enabled: quoteInput !== null && files.length > 0,
     queryFn: async () => {
       if (!quoteInput) return null;
-      const specs = quoteInput.pageCounts.map((page_count, index) => ({
-        page_count,
-        label: quoteInput.labels[index] ?? `File ${index + 1}`,
-        media_size: quoteInput.spec.media_size,
-        media_type: quoteInput.spec.media_type,
-        color_mode: quoteInput.spec.color_mode,
-        print_quality: quoteInput.spec.print_quality,
-        sides: quoteInput.spec.sides,
-        copies: quoteInput.spec.copies,
-      }));
+      const specs = quoteFilesFromEstimate(quoteInput.spec, quoteInput.files);
       const { data } = await api.post<Quote>("/orders/quote/", { files: specs });
       return data;
     },
@@ -1102,8 +1095,7 @@ export default function NewOrderPage({
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">Print</dt>
                     <dd className="text-right font-medium">
-                      {spec.color_mode === "color" ? "Color" : "Black & white"}{" "}
-                      · {paperTypeLabel(spec.media_type)}
+                      {colorModeLabel(spec.color_mode)} · {paperTypeLabel(spec.media_type)}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-4">
@@ -1143,10 +1135,11 @@ export default function NewOrderPage({
                         {totalPages} {plural(totalPages, "page", "pages")} ×{" "}
                         {spec.copies} {plural(Number(spec.copies), "copy", "copies")}
                         <br />
-                        {spec.color_mode === "color" ? "Color" : "Black & white"} ·{" "}
+                        {colorModeLabel(spec.color_mode)} ·{" "}
                         {spec.sides === "none" ? "one side" : "both sides"}
                       </p>
                     </div>
+                    <QuoteBreakdown lines={quote.lines} className="pt-1" />
                     {quote.min_partial_peso < quote.subtotal_peso && (
                       <p className="text-xs text-muted-foreground">
                         Minimum down payment: ₱{quote.min_partial_peso.toFixed(2)}

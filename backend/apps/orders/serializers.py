@@ -30,7 +30,7 @@ class PrintSpecificationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         valid_sizes = {code for code, _ in EPSON_PAPER_SIZES}
         valid_types = {code for code, _ in EPSON_PAPER_TYPES}
-        valid_colors = {code for code, _ in EPSON_COLOR_MODES}
+        valid_colors = {code for code, _ in EPSON_COLOR_MODES} | {"auto"}
         valid_sides = {code for code, _ in EPSON_DOUBLE_SIDED}
         valid_quality = {code for code, _ in EPSON_PAPER_QUALITIES}
         valid_sources = {code for code, _ in EPSON_PAPER_SOURCES}
@@ -76,6 +76,12 @@ class OrderFileSerializer(serializers.ModelSerializer):
     # Human description of the area the printer can actually reach on this
     # sheet — every file is fitted inside it before printing.
     print_area = serializers.SerializerMethodField()
+    color_analysis = serializers.JSONField(read_only=True)
+    color_page_overrides = serializers.JSONField(read_only=True)
+    effective_page_modes = serializers.SerializerMethodField()
+    detected_color_pages = serializers.SerializerMethodField()
+    detected_mono_pages = serializers.SerializerMethodField()
+    unanalyzed_pages = serializers.SerializerMethodField()
 
     def get_print_area(self, obj) -> str:
         from .services.print_prep import print_area_label
@@ -86,6 +92,35 @@ class OrderFileSerializer(serializers.ModelSerializer):
             bool(getattr(spec, "borderless", False)),
         )
 
+    def get_effective_page_modes(self, obj) -> list[dict]:
+        from .services.color_analysis import effective_page_modes
+
+        return [
+            {"page": page, "mode": mode}
+            for page, mode in effective_page_modes(obj)
+        ]
+
+    def _analysis_pages(self, obj) -> list[dict]:
+        return [
+            entry for entry in (obj.color_analysis or {}).get("pages") or []
+            if isinstance(entry, dict)
+        ]
+
+    def get_detected_color_pages(self, obj) -> int:
+        return sum(
+            1 for entry in self._analysis_pages(obj)
+            if entry.get("analyzed") and entry.get("mode") == "color"
+        )
+
+    def get_detected_mono_pages(self, obj) -> int:
+        return sum(
+            1 for entry in self._analysis_pages(obj)
+            if entry.get("analyzed") and entry.get("mode") == "mono"
+        )
+
+    def get_unanalyzed_pages(self, obj) -> int:
+        return sum(1 for entry in self._analysis_pages(obj) if not entry.get("analyzed"))
+
     class Meta:
         model = OrderFile
         fields = ["id", "file_name", "file_type", "content_type", "size", "page_count",
@@ -95,7 +130,9 @@ class OrderFileSerializer(serializers.ModelSerializer):
                   "specification",
                   "page_selection", "selected_pages", "selected_page_count",
                   "page_selection_label", "page_selection_active", "print_ready",
-                  "print_area", "uploaded_at"]
+                  "print_area", "color_analysis", "color_page_overrides",
+                  "effective_page_modes", "detected_color_pages", "detected_mono_pages",
+                  "unanalyzed_pages", "uploaded_at"]
         read_only_fields = fields
 
     def get_has_edits(self, obj) -> bool:
@@ -143,7 +180,8 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = ["id", "tracking_id", "status", "status_display", "payment_type",
                   "payment_method", "client_name", "guest_name", "guest_contact_method",
-                  "guest_contact_value", "subtotal", "subtotal_peso", "min_partial_peso",
+                  "guest_contact_value", "subtotal", "subtotal_peso", "quote_breakdown",
+                  "min_partial_peso",
                   "amount_paid", "amount_paid_peso",
                   "balance_due", "balance_due_peso", "admin_notes", "revision_note",
                   "reprint_count",
@@ -185,7 +223,9 @@ class PrintJobSerializerLite(serializers.ModelSerializer):
         model = PrintJob
         fields = ["id", "epson_job_id", "file_name", "order_file", "printer_name",
                   "print_mode", "status", "status_display", "epson_status",
-                  "pages_printed", "pages_snapshot", "pages_label", "is_reprint",
+                  "pages_printed", "pages_snapshot", "pages_label",
+                  "print_settings_snapshot", "run_id",
+                  "segment_index", "copy_index", "segment_count", "is_reprint",
                   "is_printer_cancelled", "error_message",
                   "submitted_at", "completed_at", "created_at"]
 

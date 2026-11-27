@@ -10,4 +10,6 @@ class PrintJobSerializer(serializers.ModelSerializer):
         model = PrintJob
         fields = ["id", "order", "order_file", "file_name", "epson_job_id", "printer_name",
                   "print_mode", "print_settings_snapshot", "status", "epson_status",
-                  "pages_printed", "error_message", "submitted_at", "completed_at", "created_at"]
+                  "pages_snapshot", "run_id", "segment_index", "copy_index", "segment_count",
+                  "is_reprint", "pages_printed", "error_message", "submitted_at",
+                  "completed_at", "created_at"]

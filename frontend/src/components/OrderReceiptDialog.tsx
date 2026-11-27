@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import QuoteBreakdown from "@/components/QuoteBreakdown";
 import { formatDateTime, formatPeso } from "@/lib/utils";
 import type { Order } from "@/lib/types";
 
@@ -127,6 +128,12 @@ export default function OrderReceiptDialog({ order, open, onClose }: Props) {
               ))}
             </tbody>
           </table>
+
+          <QuoteBreakdown
+            lines={order.quote_breakdown ?? []}
+            tone="receipt"
+            className="pt-4"
+          />
 
           <dl className="space-y-1 py-4 text-sm">
             <div className="flex justify-between">

@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     AdminOrderActionView,
     AdminOrderDetailView,
+    AdminOrderFileColorView,
     AdminOrderFilePagesView,
     AdminOrderFileReplaceView,
     AdminOrderListView,
@@ -42,6 +43,8 @@ urlpatterns = [
     path("admin/orders/<int:pk>/actions/<str:action>/", AdminOrderActionView.as_view(), name="admin-order-action"),
     path("admin/orders/<int:pk>/notes/", AdminOrderNotesView.as_view(), name="admin-order-notes"),
     path("admin/orders/<int:order_pk>/specs/<int:spec_pk>/", AdminOrderSpecView.as_view(), name="admin-order-spec"),
+    path("admin/orders/<int:order_pk>/files/<int:file_pk>/color/",
+         AdminOrderFileColorView.as_view(), name="admin-order-file-color"),
     path("admin/orders/<int:order_pk>/files/<int:file_pk>/pages/",
          AdminOrderFilePagesView.as_view(), name="admin-order-file-pages"),
     path("admin/orders/<int:order_pk>/files/<int:file_pk>/replace/",

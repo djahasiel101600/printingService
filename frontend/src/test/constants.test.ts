@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ATTENTION_STATUSES,
+  colorModeLabel,
   formatBytes,
   formatPageRange,
   parsePageRange,
@@ -89,6 +90,14 @@ describe("ATTENTION_STATUSES", () => {
       "on_hold",
       "print_cancelled",
     ]);
+  });
+});
+
+describe("colorModeLabel", () => {
+  it("names automatic page-by-page mode without implying monochrome", () => {
+    expect(colorModeLabel("auto")).toBe("Auto (per page)");
+    expect(colorModeLabel("mono")).toBe("Black & white");
+    expect(colorModeLabel("color")).toBe("Color");
   });
 });
 

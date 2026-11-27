@@ -31,8 +31,9 @@ import { useAuth } from "@/components/auth";
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import FileReviewCard from "@/components/FileReviewCard";
 import OrderReceiptDialog from "@/components/OrderReceiptDialog";
+import QuoteBreakdown from "@/components/QuoteBreakdown";
 import { Textarea } from "@/components/ui/textarea";
-import { printJobStatusLabel, printJobStatusStyle } from "@/lib/constants";
+import { colorModeLabel, printJobStatusLabel, printJobStatusStyle } from "@/lib/constants";
 import { api, apiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Order, OrderFile, PrintJob } from "@/lib/types";
@@ -478,6 +479,10 @@ export default function AdminOrderDetailPage() {
               <CardTitle className="text-base">Order summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
+              {order.quote_breakdown?.length > 0 && (
+                <QuoteBreakdown lines={order.quote_breakdown} />
+              )}
+              <Separator className="my-2" />
               <Row label="Subtotal" value={peso(order.subtotal_peso)} />
               <Row label="Paid" value={peso(order.amount_paid_peso)} />
               <Row
@@ -820,6 +825,9 @@ function PrintJobRow({
   job: PrintJob;
   onReprint: () => void;
 }) {
+  const colorMode = job.print_settings_snapshot?.colorMode;
+  const segmented = job.segment_count > 1;
+
   return (
     <li className="rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -840,6 +848,21 @@ function PrintJobRow({
               Reprint
             </span>
           )}
+          {colorMode && (
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+              {colorModeLabel(colorMode)}
+            </span>
+          )}
+          {segmented && (
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+              Segment {job.segment_index}/{job.segment_count}
+            </span>
+          )}
+          {(segmented || job.copy_index > 1) && (
+            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
+              Copy {job.copy_index}
+            </span>
+          )}
         </div>
         {job.is_printer_cancelled && (
           <Button variant="outline" size="sm" onClick={onReprint}>
@@ -849,6 +872,7 @@ function PrintJobRow({
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
         {job.pages_label} · {job.epson_status || job.status}
+        {job.run_id ? ` · run ${job.run_id.slice(0, 8)}` : ""}
         {job.completed_at ? ` · finished ${formatDate(job.completed_at)}` : ""}
       </p>
       {job.error_message && (

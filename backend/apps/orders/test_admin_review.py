@@ -487,6 +487,7 @@ class ReprintTests(AdminReviewTestCase):
     def test_reprint_is_allowed_after_completion(self):
         order = self.approved_order()
         self.api.post("/api/admin/print-jobs/", {}, format="json")
+        Order.objects.get(pk=order["id"]).print_jobs.update(status="completed")
         self.assertEqual(self.act(order, "ready").status_code, 200)
         self.assertEqual(self.act(order, "complete").status_code, 200)
         reprint = self.act(order, "reprint", {"note": "Customer lost the first copy"})

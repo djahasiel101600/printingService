@@ -40,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import OrderReceiptDialog from "@/components/OrderReceiptDialog";
+import QuoteBreakdown from "@/components/QuoteBreakdown";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, loadGuestOrders } from "@/lib/api";
 import type {
@@ -498,6 +499,9 @@ export default function OrderDetailPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {order.quote_breakdown?.length > 0 && (
+                <QuoteBreakdown lines={order.quote_breakdown} />
+              )}
               <dl className="space-y-2 text-sm">
                 <div className="flex items-baseline justify-between gap-4">
                   <dt className="text-muted-foreground">Total</dt>

@@ -1,10 +1,12 @@
+import uuid
+
 from django.db import models
 
 from apps.orders.models import Order
 
 
 class PrintJob(models.Model):
-    """One Epson Connect print job (one per order file)."""
+    """One Epson Connect job, possibly one segment/copy of an order file."""
 
     class JobStatus(models.TextChoices):
         CREATED = "created", "Created"
@@ -26,6 +28,12 @@ class PrintJob(models.Model):
     # Page numbers actually sent for this file (empty = every page). Snapshot so
     # the history of a reprint still shows what each run contained.
     pages_snapshot = models.JSONField(default=list, blank=True)
+    # Every submission/reprint gets a new run ID. The latest run controls
+    # failures/cancellations; active jobs from older runs still delay readiness.
+    run_id = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
+    segment_index = models.PositiveSmallIntegerField(default=1)
+    copy_index = models.PositiveSmallIntegerField(default=1)
+    segment_count = models.PositiveSmallIntegerField(default=1)
     is_reprint = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=JobStatus.choices, default=JobStatus.CREATED)
     epson_status = models.CharField(max_length=32, blank=True)        # raw Epson status enum
