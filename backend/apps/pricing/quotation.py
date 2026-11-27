@@ -23,12 +23,16 @@ from .models import PriceRule, PricingSettings
 @dataclass
 class LineQuote:
     label: str
-    pages: int
-    copies: int
-    unit_price: int          # centavos per printed side
-    sides: int               # total printed sides
+    pages: int | None
+    copies: int | None
+    unit_price: int          # centavos per printed side or catalogue unit
+    sides: int | None       # total printed sides; catalogue quantity is separate
     amount: int              # centavos
-    color_mode: str = "mono"  # concrete mode; ``auto`` is expanded below
+    color_mode: str | None = "mono"  # concrete mode; ``auto`` is expanded below
+    kind: str = "custom"
+    quantity: int | None = None
+    unit_label: str | None = None
+    product_id: int | None = None
 
 
 @dataclass
@@ -156,4 +160,6 @@ def line_quote_data(line: LineQuote) -> dict:
         "color_mode": line.color_mode,
         "unit_price": line.unit_price, "unit_price_peso": line.unit_price / 100,
         "sides": line.sides, "amount": line.amount, "amount_peso": line.amount / 100,
+        "kind": line.kind, "quantity": line.quantity,
+        "unit_label": line.unit_label, "product_id": line.product_id,
     }

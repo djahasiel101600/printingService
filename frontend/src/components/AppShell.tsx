@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   ClipboardList,
+  Store,
   FilePlus2,
   FileText,
   LogOut,
@@ -74,6 +75,12 @@ const STAFF_NAV: NavItem[] = [
     to: "/admin/orders/new",
     label: "Create order for customer",
     icon: FilePlus2,
+    show: (u) => !!u?.is_shop_admin,
+  },
+  {
+    to: "/admin/catalogue",
+    label: "Catalogue",
+    icon: Store,
     show: (u) => !!u?.is_shop_admin,
   },
   {

@@ -1,7 +1,6 @@
 import { colorModeLabel } from "@/lib/constants";
 import type { QuoteLine } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { formatPeso } from "@/lib/utils";
+import { cn, formatPeso, formatQuantityUnit } from "@/lib/utils";
 
 interface QuoteBreakdownProps {
   lines: QuoteLine[];
@@ -41,10 +40,19 @@ export default function QuoteBreakdown({
             <div className="min-w-0">
               <p className="break-words text-xs font-medium">{baseLabel(line.label)}</p>
               <p className={cn("mt-0.5 text-[11px]", muted)}>
-                {line.color_mode ? colorModeLabel(line.color_mode) : "Print"} ·{" "}
-                {line.pages} {line.pages === 1 ? "page" : "pages"} × {line.copies}{" "}
-                {line.copies === 1 ? "copy" : "copies"} ·{" "}
-                {formatPeso(line.unit_price_peso)}/side
+                {line.kind === "catalogue" ? (
+                  <>
+                    {formatQuantityUnit(line.quantity, line.unit_label)} × {formatPeso(line.unit_price_peso)}/
+                    {line.unit_label || "piece"}
+                  </>
+                ) : (
+                  <>
+                    {line.color_mode ? colorModeLabel(line.color_mode) : "Print"} ·{" "}
+                    {line.pages ?? 0} {line.pages === 1 ? "page" : "pages"} × {line.copies ?? 0}{" "}
+                    {line.copies === 1 ? "copy" : "copies"} ·{" "}
+                    {formatPeso(line.unit_price_peso)}/side
+                  </>
+                )}
               </p>
             </div>
             <span className="shrink-0 text-xs font-semibold tabular-nums">

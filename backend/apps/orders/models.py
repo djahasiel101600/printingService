@@ -70,6 +70,20 @@ class Order(models.Model):
     quote_breakdown = models.JSONField(default=list, blank=True)
     amount_paid = models.PositiveIntegerField(default=0, help_text="Centavos")
 
+    # Catalogue service snapshots. The product relation is protected so an
+    # archived product remains available for historical order review.
+    catalogue_product = models.ForeignKey(
+        "catalogue.Product", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="orders",
+    )
+    product_name_snapshot = models.CharField(max_length=120, null=True, blank=True)
+    product_unit_price_snapshot = models.PositiveIntegerField(null=True, blank=True)
+    product_unit_label_snapshot = models.CharField(max_length=60, null=True, blank=True)
+    product_instructions_snapshot = models.TextField(null=True, blank=True)
+    product_min_quantity_snapshot = models.PositiveSmallIntegerField(null=True, blank=True)
+    product_max_quantity_snapshot = models.PositiveSmallIntegerField(null=True, blank=True)
+    product_quantity = models.PositiveSmallIntegerField(null=True, blank=True)
+
     admin_notes = models.TextField(blank=True, help_text="Internal notes, never shown to clients")
     revision_note = models.TextField(blank=True, help_text="Sent to the client when a revision is requested")
 
@@ -89,6 +103,10 @@ class Order(models.Model):
         return f"{self.tracking_id} ({self.get_status_display()})"
 
     # ------------------------------------------------------------- helpers
+    @property
+    def order_mode(self) -> str:
+        return "catalogue" if self.catalogue_product_id else "custom"
+
     @property
     def balance_due(self) -> int:
         return max(0, self.subtotal - self.amount_paid)

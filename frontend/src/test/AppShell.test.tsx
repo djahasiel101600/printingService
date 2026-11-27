@@ -55,6 +55,7 @@ describe("AppShell navigation by role", () => {
 
     expect(screen.queryByRole("link", { name: /^admin$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /staff/i })).not.toBeInTheDocument();
   });
 
@@ -65,6 +66,7 @@ describe("AppShell navigation by role", () => {
     expect(screen.getByRole("link", { name: /new order/i })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^admin$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /staff/i })).not.toBeInTheDocument();
   });
 
@@ -77,6 +79,7 @@ describe("AppShell navigation by role", () => {
     renderShell();
 
     expect(screen.getByRole("link", { name: /review queue/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^staff$/i })).not.toBeInTheDocument();
   });
@@ -95,6 +98,7 @@ describe("AppShell navigation by role", () => {
 
     expect(screen.getByRole("menuitem", { name: /review queue/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /pricing/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /catalogue/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /^staff$/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /api settings/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /create order for customer/i })).toBeInTheDocument();
@@ -151,6 +155,7 @@ describe("AppShell mobile navigation", () => {
     expect(within(drawer).getByRole("link", { name: /create order for customer/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /review queue/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /pricing/i })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: /catalogue/i })).toBeInTheDocument();
   });
 
   it("closes the drawer on Escape", async () => {

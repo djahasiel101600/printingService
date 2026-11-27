@@ -49,7 +49,7 @@ import type {
   OrderFile,
   ShopPaymentSettings,
 } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, formatQuantityUnit } from "@/lib/utils";
 
 interface CreatedState {
   justCreated?: boolean;
@@ -578,6 +578,44 @@ export default function OrderDetailPage() {
         </aside>
 
         <div className="space-y-6">
+          {order.order_mode === "catalogue" && order.product_name_snapshot && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Catalogue service</CardTitle>
+                <CardDescription>
+                  Product details and pricing saved when this order was placed.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div>
+                  <p className="font-semibold">{order.product_name_snapshot}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {formatQuantityUnit(
+                      order.product_quantity,
+                      order.product_unit_label_snapshot,
+                    )} at{" "}
+                    {order.product_unit_price_snapshot !== null
+                      ? peso(order.product_unit_price_snapshot / 100)
+                      : "—"}
+                    {" / "}
+                    {order.product_unit_label_snapshot || "piece"}
+                  </p>
+                </div>
+                {order.product_instructions_snapshot && (
+                  <div className="rounded-md bg-muted/50 p-3">
+                    <p className="text-xs font-medium text-muted-foreground">Service instructions</p>
+                    <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                      {order.product_instructions_snapshot}
+                    </p>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  The shop prepares the final layout from your source file before printing.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
               <CardTitle>Files ({order.files.length})</CardTitle>

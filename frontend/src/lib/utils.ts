@@ -12,6 +12,14 @@ export function formatPeso(amountInPeso: number): string {
   })}`;
 }
 
+export function formatQuantityUnit(
+  quantity: number | null | undefined,
+  unitLabel?: string | null,
+): string {
+  const unit = unitLabel || "piece";
+  return `${quantity ?? "—"} ${quantity === 1 ? unit : `${unit}s`}`;
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—";
   return new Date(value).toLocaleString("en-PH", {

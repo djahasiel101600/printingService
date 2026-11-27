@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,7 +36,7 @@ import QuoteBreakdown from "@/components/QuoteBreakdown";
 import { Textarea } from "@/components/ui/textarea";
 import { colorModeLabel, printJobStatusLabel, printJobStatusStyle } from "@/lib/constants";
 import { api, apiErrorMessage } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatQuantityUnit } from "@/lib/utils";
 import type { Order, OrderFile, PrintJob } from "@/lib/types";
 
 type AdminAction =
@@ -64,6 +65,13 @@ const ACTION_LABELS: Record<AdminAction, string> = {
 };
 
 const DESTRUCTIVE: AdminAction[] = ["reject", "cancel"];
+
+const QUANTITY_EDITABLE_STATUSES: Order["status"][] = [
+  "draft",
+  "awaiting_payment",
+  "pending_review",
+  "revision_requested",
+];
 
 /** Actions the shop can take from each status (mirrors the API's ALLOWED map). */
 function availableActions(status: Order["status"]): AdminAction[] {
@@ -121,6 +129,8 @@ export default function AdminOrderDetailPage() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
+  const [catalogueQuantity, setCatalogueQuantity] = useState("");
+  const [quantityError, setQuantityError] = useState("");
 
   const {
     data: order,
@@ -133,8 +143,13 @@ export default function AdminOrderDetailPage() {
   });
 
   useEffect(() => {
-    if (order) setNotes(order.admin_notes ?? "");
-  }, [order?.id, order?.admin_notes]);
+    if (!order) return;
+    setNotes(order.admin_notes ?? "");
+    setCatalogueQuantity(
+      order.product_quantity !== null ? String(order.product_quantity) : "",
+    );
+    setQuantityError("");
+  }, [order?.id, order?.admin_notes, order?.product_quantity]);
 
   const actionMutation = useMutation({
     mutationFn: async (payload: {
@@ -160,6 +175,26 @@ export default function AdminOrderDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
+  });
+
+  const quantityMutation = useMutation({
+    mutationFn: async (quantity: number) =>
+      (
+        await api.patch<Order>(`/admin/orders/${id}/product/`, {
+          product_quantity: quantity,
+        })
+      ).data,
+    onSuccess: (data) => {
+      setQuantityError("");
+      toast.success("Catalogue quantity and fixed subtotal updated.");
+      queryClient.setQueryData(["admin-order", id], data);
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+    },
+    onError: (error) => {
+      const message = apiErrorMessage(error);
+      setQuantityError(message);
+      toast.error(message);
+    },
   });
 
   const notesMutation = useMutation({
@@ -223,6 +258,18 @@ export default function AdminOrderDetailPage() {
         (action) => action !== "cancel" && action !== "record_payment",
       );
   const printerCancelled = order.status === "print_cancelled";
+  const isCatalogue = order.order_mode === "catalogue";
+  const catalogueNeedsLayout =
+    isCatalogue &&
+    (order.files.length === 0 ||
+      order.files.some((file) => !file.replaced_by_admin || !file.final_file));
+  const canEditQuantity =
+    isCatalogue &&
+    Boolean(user?.is_shop_admin) &&
+    QUANTITY_EDITABLE_STATUSES.includes(order.status) &&
+    order.amount_paid === 0 &&
+    order.product_min_quantity_snapshot !== null &&
+    order.product_unit_price_snapshot !== null;
   const unprintable = order.files.filter((f) => !f.print_ready);
   const jobs = order.print_jobs ?? [];
   const printerCancelledJobs = jobs.filter((j) => j.is_printer_cancelled);
@@ -258,6 +305,33 @@ export default function AdminOrderDetailPage() {
 
   const runAction = (action: AdminAction) =>
     action === "reprint" ? setReprintTarget("all") : setConfirmAction(action);
+
+  function updateCatalogueQuantity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!order) return;
+    setQuantityError("");
+    const raw = catalogueQuantity.trim();
+    const quantity = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(quantity) || quantity < 1) {
+      setQuantityError("Enter a positive whole-number quantity.");
+      return;
+    }
+    const minimum = order.product_min_quantity_snapshot;
+    const maximum = order.product_max_quantity_snapshot;
+    if (minimum !== null && quantity < minimum) {
+      setQuantityError(`Quantity must be at least ${minimum}.`);
+      return;
+    }
+    if (maximum !== null && quantity > maximum) {
+      setQuantityError(`Quantity cannot exceed ${maximum}.`);
+      return;
+    }
+    if (quantity === order.product_quantity) {
+      setQuantityError("Enter a different quantity to update this order.");
+      return;
+    }
+    quantityMutation.mutate(quantity);
+  }
 
   return (
     <div className="space-y-6">
@@ -321,7 +395,17 @@ export default function AdminOrderDetailPage() {
         </AlertBanner>
       )}
 
-      {unprintable.length > 0 && (
+      {catalogueNeedsLayout && (
+        <AlertBanner title="Shop-prepared layout required before approval">
+          <p>
+            Upload the finished catalogue layout through <strong>Upload prepared layout</strong>{" "}
+            on the source file. A raw photo, printer-compatible PDF, or automatically generated
+            final file cannot approve this order.
+          </p>
+        </AlertBanner>
+      )}
+
+      {!isCatalogue && unprintable.length > 0 && (
         <AlertBanner
           title={`${unprintable.length} file(s) cannot be sent to the printer`}
         >
@@ -342,7 +426,9 @@ export default function AdminOrderDetailPage() {
                 Files to review ({order.files.length})
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Preview each file, then choose the pages to print.
+                {isCatalogue
+                  ? "Upload the shop-prepared layout before approving this catalogue order."
+                  : "Preview each file, then choose the pages to print."}
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -478,7 +564,81 @@ export default function AdminOrderDetailPage() {
             <CardHeader>
               <CardTitle className="text-base">Order summary</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
+            <CardContent className="space-y-3 text-sm">
+              {isCatalogue && order.product_name_snapshot && (
+                <div className="space-y-3 rounded-md border bg-muted/40 p-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Catalogue service</p>
+                    <p className="mt-1 font-semibold">{order.product_name_snapshot}</p>
+                    <p className="mt-1 text-muted-foreground">
+                      {formatQuantityUnit(
+                        order.product_quantity,
+                        order.product_unit_label_snapshot,
+                      )} ×{" "}
+                      {order.product_unit_price_snapshot !== null
+                        ? peso(order.product_unit_price_snapshot / 100)
+                        : "—"}
+                      {" / "}
+                      {order.product_unit_label_snapshot || "piece"}
+                    </p>
+                  </div>
+
+                  {order.product_instructions_snapshot && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Product instructions</p>
+                      <p className="mt-1 whitespace-pre-wrap leading-relaxed">
+                        {order.product_instructions_snapshot}
+                      </p>
+                    </div>
+                  )}
+
+                  <p className="rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    Fixed pricing uses the saved product price. File, page, color, and print-setting
+                    changes do not alter the catalogue subtotal.
+                  </p>
+
+                  {canEditQuantity ? (
+                    <form onSubmit={updateCatalogueQuantity} className="space-y-2" noValidate>
+                      <Label htmlFor="catalogue-quantity">Finished quantity</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="catalogue-quantity"
+                          type="number"
+                          min={order.product_min_quantity_snapshot ?? 1}
+                          max={order.product_max_quantity_snapshot ?? undefined}
+                          step={1}
+                          value={catalogueQuantity}
+                          onChange={(event) => {
+                            setCatalogueQuantity(event.target.value);
+                            setQuantityError("");
+                          }}
+                          aria-invalid={!!quantityError}
+                          aria-describedby={quantityError ? "catalogue-quantity-error" : undefined}
+                          disabled={quantityMutation.isPending}
+                        />
+                        <Button type="submit" variant="outline" disabled={quantityMutation.isPending}>
+                          {quantityMutation.isPending ? "Saving…" : "Update"}
+                        </Button>
+                      </div>
+                      {quantityError && (
+                        <p id="catalogue-quantity-error" role="alert" className="text-xs text-destructive">
+                          {quantityError}
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Changing quantity clears prepared output and page selections. Staff must upload
+                        the layout again before approval.
+                      </p>
+                    </form>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Quantity can be changed only by a shop admin before approval and before any
+                      payment is recorded.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {order.quote_breakdown?.length > 0 && (
                 <QuoteBreakdown lines={order.quote_breakdown} />
               )}
@@ -607,7 +767,9 @@ export default function AdminOrderDetailPage() {
             <DialogDescription>
               Order {order.tracking_id} ·{" "}
               {confirmAction === "approve"
-                ? "This releases the job to the printer."
+                ? catalogueNeedsLayout
+                  ? "Approval is blocked until staff upload the shop-prepared layout."
+                  : "This releases the job to the printer."
                 : "This will change the order status."}
               {confirmAction &&
                 DESTRUCTIVE.includes(confirmAction) &&

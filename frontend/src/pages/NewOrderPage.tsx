@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Check,
@@ -52,6 +52,8 @@ import {
   sidesLabel,
 } from "@/lib/constants";
 import QuoteBreakdown from "@/components/QuoteBreakdown";
+import CatalogueOrderFields from "@/components/CatalogueOrderFields";
+import { fetchAllCatalogueProducts } from "@/lib/catalogue";
 import { quoteFilesFromEstimate } from "@/lib/quotes";
 import type {
   Capabilities,
@@ -66,7 +68,7 @@ import SpecFields, {
   ADVANCED_SPEC_KEYS,
   DEFAULT_SPEC,
 } from "@/components/SpecFields";
-import { cn } from "@/lib/utils";
+import { cn, formatPeso } from "@/lib/utils";
 
 export type GuestMethod = "email" | "phone" | "facebook";
 
@@ -136,6 +138,9 @@ function StepTitle({ step, children }: { step?: number; children: ReactNode }) {
 
 interface FormErrors {
   files?: string;
+  product?: string;
+  quantity?: string;
+  quote?: string;
   name?: string;
   value?: string;
 }
@@ -263,6 +268,8 @@ export default function NewOrderPage({
 }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isCatalogue = searchParams.get("mode") === "catalogue";
   const [files, setFiles] = useState<File[]>([]);
   /** Orientation only affects picture files, so the control follows the uploads. */
   const hasImages = files.some((file) =>
@@ -286,6 +293,9 @@ export default function NewOrderPage({
   const [dragging, setDragging] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [catalogueProductId, setCatalogueProductId] = useState("");
+  const [catalogueQuantity, setCatalogueQuantity] = useState("1");
+  const [catalogueInstructions, setCatalogueInstructions] = useState("");
 
   const capabilitiesQuery = useQuery({
     queryKey: ["capabilities"],
@@ -293,7 +303,29 @@ export default function NewOrderPage({
       const { data } = await api.get<Capabilities>("/printing/capabilities/");
       return data;
     },
+    enabled: !isCatalogue,
   });
+
+  const catalogueProductsQuery = useQuery({
+    queryKey: ["catalogue-products"],
+    queryFn: () => fetchAllCatalogueProducts(),
+    enabled: isCatalogue,
+  });
+  const catalogueProducts = catalogueProductsQuery.data ?? [];
+  const selectedProduct = catalogueProducts.find(
+    (product) => String(product.id) === catalogueProductId,
+  );
+  const catalogueQuantityIsValid = Boolean(
+    selectedProduct &&
+      /^\d+$/.test(catalogueQuantity) &&
+      Number.isSafeInteger(Number(catalogueQuantity)) &&
+      Number(catalogueQuantity) >= selectedProduct.min_quantity &&
+      (selectedProduct.max_quantity === null ||
+        Number(catalogueQuantity) <= selectedProduct.max_quantity),
+  );
+  const catalogueQuantityNumber = catalogueQuantityIsValid
+    ? Number(catalogueQuantity)
+    : null;
 
   const customersQuery = useQuery({
     queryKey: ["admin-customers", debouncedSearch],
@@ -323,14 +355,14 @@ export default function NewOrderPage({
     onError: () => setEstimate(null),
   });
 
-  // Re-estimate whenever the file list changes.
+  // Custom orders use real page counts. Catalogue prices never depend on them.
   useEffect(() => {
-    if (files.length === 0) {
+    if (isCatalogue || files.length === 0) {
       setEstimate(null);
       return;
     }
     estimateMutation.mutate();
-  }, [files]);
+  }, [files, isCatalogue]);
 
   // Debounced quote input: spec + real page counts from the estimate.
   interface QuoteInput {
@@ -339,7 +371,7 @@ export default function NewOrderPage({
   }
   const [quoteInput, setQuoteInput] = useState<QuoteInput | null>(null);
   useEffect(() => {
-    if (!estimate) {
+    if (isCatalogue || !estimate) {
       setQuoteInput(null);
       return;
     }
@@ -349,11 +381,11 @@ export default function NewOrderPage({
     };
     const timer = setTimeout(() => setQuoteInput(next), 350);
     return () => clearTimeout(timer);
-  }, [estimate, spec]);
+  }, [estimate, spec, isCatalogue]);
 
   const quoteQuery = useQuery({
     queryKey: ["new-order-quote", quoteInput],
-    enabled: quoteInput !== null && files.length > 0,
+    enabled: !isCatalogue && quoteInput !== null && files.length > 0,
     queryFn: async () => {
       if (!quoteInput) return null;
       const specs = quoteFilesFromEstimate(quoteInput.spec, quoteInput.files);
@@ -362,13 +394,67 @@ export default function NewOrderPage({
     },
     retry: false,
   });
-  const quote = quoteQuery.data;
+  const catalogueQuoteQuery = useQuery({
+    queryKey: ["catalogue-quote", catalogueProductId, catalogueQuantity],
+    enabled:
+      isCatalogue &&
+      selectedProduct !== undefined &&
+      catalogueQuantityNumber !== null,
+    queryFn: async () => {
+      const { data } = await api.post<Quote>("/orders/quote/", {
+        order_mode: "catalogue",
+        product_id: Number(catalogueProductId),
+        product_quantity: catalogueQuantityNumber,
+      });
+      return data;
+    },
+    retry: false,
+  });
+  const quote = isCatalogue ? catalogueQuoteQuery.data : quoteQuery.data;
+
+  function selectOrderMode(mode: "custom" | "catalogue") {
+    const next = new URLSearchParams(searchParams);
+    if (mode === "catalogue") next.set("mode", "catalogue");
+    else next.delete("mode");
+    setSearchParams(next);
+    setErrors((prev) => ({
+      ...prev,
+      files: undefined,
+      product: undefined,
+      quantity: undefined,
+      quote: undefined,
+    }));
+    if (mode === "catalogue" && files.length > 1) {
+      setErrors((prev) => ({
+        ...prev,
+        files: "Catalogue orders require exactly one source file. Remove the extra files.",
+      }));
+    }
+  }
+
+  function changeCatalogueProduct(id: string) {
+    setCatalogueProductId(id);
+    const product = catalogueProducts.find((item) => String(item.id) === id);
+    if (product) setCatalogueQuantity(String(product.min_quantity));
+    setErrors((prev) => ({ ...prev, product: undefined, quantity: undefined, quote: undefined }));
+  }
 
   const submitMutation = useMutation({
     mutationFn: async () => {
       const formData = new FormData();
       files.forEach((f) => formData.append("files", f));
-      formData.append("spec", JSON.stringify(spec));
+      if (isCatalogue) {
+        formData.append("order_mode", "catalogue");
+        formData.append("product_id", catalogueProductId);
+        formData.append("product_quantity", String(catalogueQuantityNumber));
+        // Send only customer notes: product defaults must win over custom defaults.
+        formData.append(
+          "spec",
+          JSON.stringify({ free_text_instructions: catalogueInstructions.trim() }),
+        );
+      } else {
+        formData.append("spec", JSON.stringify(spec));
+      }
       if (adminMode) {
         if (selectedCustomer) {
           formData.append("customer_user_id", String(selectedCustomer.id));
@@ -456,7 +542,16 @@ export default function NewOrderPage({
       }
     }
     if (accepted.length > 0) {
-      setFiles((prev) => [...prev, ...accepted]);
+      if (isCatalogue) {
+        setFiles(accepted.slice(0, 1));
+        if (accepted.length > 1 || files.length > 0) {
+          toast.info(
+            "Catalogue orders use one source file. The first selected file was kept.",
+          );
+        }
+      } else {
+        setFiles((prev) => [...prev, ...accepted]);
+      }
       setErrors((prev) => ({ ...prev, files: undefined }));
     }
     if (rejected.length > 0) {
@@ -494,7 +589,29 @@ export default function NewOrderPage({
 
   function validate(): FormErrors {
     const next: FormErrors = {};
-    if (files.length === 0) next.files = "Add at least one file to print.";
+    if (isCatalogue) {
+      if (files.length !== 1) {
+        next.files =
+          files.length === 0
+            ? "Add one source photo or file for this service."
+            : "Catalogue orders require exactly one source file. Remove the extra files.";
+      }
+      if (!selectedProduct) {
+        next.product = "Choose a catalogue service.";
+      } else if (!catalogueQuantityIsValid) {
+        next.quantity =
+          selectedProduct.max_quantity === null
+            ? `Enter a whole number of at least ${selectedProduct.min_quantity}.`
+            : `Enter a whole number from ${selectedProduct.min_quantity} to ${selectedProduct.max_quantity}.`;
+      }
+      if (!quote || catalogueQuoteQuery.isError) {
+        next.quote = catalogueQuoteQuery.isError
+          ? "We couldn't load the fixed price. Try again before placing the order."
+          : "Wait for the fixed price to load before placing the order.";
+      }
+    } else if (files.length === 0) {
+      next.files = "Add at least one file to print.";
+    }
     if (needsGuestDetails) {
       if (!guestName.trim()) {
         next.name = adminMode
@@ -524,9 +641,15 @@ export default function NewOrderPage({
       // Move focus to the first problem so keyboard and screen-reader users land on it.
       const firstId = next.files
         ? "file-upload"
-        : next.name
-          ? "guest-name"
-          : "guest-value";
+        : next.product
+          ? "catalogue-product"
+          : next.quantity
+            ? "catalogue-quantity"
+            : next.name
+              ? "guest-name"
+              : next.value
+                ? "guest-value"
+                : "catalogue-product";
       document.getElementById(firstId)?.focus();
       return;
     }
@@ -564,7 +687,14 @@ export default function NewOrderPage({
   // What's still missing, shown as a checklist so the person always knows what's left.
   const contactDone = !needsGuestDetails || (!!guestName.trim() && !!guestValue.trim());
   const checklist = [
-    { label: "Add your files", done: files.length > 0 },
+    ...(isCatalogue
+      ? [
+          { label: "Choose a catalogue service", done: !!selectedProduct },
+          { label: "Set a valid quantity", done: catalogueQuantityIsValid },
+          { label: "Add one source file", done: files.length === 1 },
+          { label: "Confirm the fixed price", done: !!quote && !catalogueQuoteQuery.isError },
+        ]
+      : [{ label: "Add your files", done: files.length > 0 }]),
     ...(needsGuestDetails
       ? [{ label: "Tell us how to reach you", done: contactDone }]
       : []),
@@ -579,8 +709,11 @@ export default function NewOrderPage({
       ? user.first_name || user.email
       : guestName.trim() || "Not set yet";
 
-  const estimating = estimateMutation.isPending;
-  const totalPages = estimate?.total_pages ?? 0;
+  const estimating = !isCatalogue && estimateMutation.isPending;
+  const quotePending = isCatalogue
+    ? catalogueQuoteQuery.isFetching
+    : estimating || quoteQuery.isFetching;
+  const totalPages = isCatalogue ? 0 : (estimate?.total_pages ?? 0);
 
   return (
     <>
@@ -591,8 +724,12 @@ export default function NewOrderPage({
           </h1>
           <p className="max-w-2xl text-muted-foreground">
             {adminMode
-              ? "Create an order on behalf of a customer. It will appear in Admin → Orders like any other order."
-              : "Add your files and we'll take care of the rest. No printer settings to figure out, and a real person reviews every job before it prints."}
+              ? isCatalogue
+                ? "Create a fixed-price catalogue order for a customer. The shop prepares the final layout before printing."
+                : "Create an order on behalf of a customer. It will appear in Admin → Orders like any other order."
+              : isCatalogue
+                ? "Choose a fixed-price service, upload one source file, and tell us how many finished pieces you need."
+                : "Add your files and we'll take care of the rest. No printer settings to figure out, and a real person reviews every job before it prints."}
           </p>
           {!adminMode && (
             <ul className="flex flex-wrap gap-x-6 gap-y-1.5 text-sm text-muted-foreground">
@@ -602,7 +739,7 @@ export default function NewOrderPage({
               </li>
               <li className="flex items-center gap-1.5">
                 <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
-                Settings are chosen for you
+                {isCatalogue ? "Fixed price before you order" : "Settings are chosen for you"}
               </li>
               <li className="flex items-center gap-1.5">
                 <UserCheck className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -612,14 +749,59 @@ export default function NewOrderPage({
           )}
         </div>
 
+        <div className="grid grid-cols-2 gap-2 rounded-lg border bg-muted/40 p-2" aria-label="Order type">
+          <Button
+            type="button"
+            variant={!isCatalogue ? "default" : "ghost"}
+            aria-pressed={!isCatalogue}
+            onClick={() => selectOrderMode("custom")}
+          >
+            Custom print
+          </Button>
+          <Button
+            type="button"
+            variant={isCatalogue ? "default" : "ghost"}
+            aria-pressed={isCatalogue}
+            onClick={() => selectOrderMode("catalogue")}
+          >
+            Catalogue service
+          </Button>
+        </div>
+
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
           <div className="space-y-6">
+            {isCatalogue && (
+              <CatalogueOrderFields
+                products={catalogueProducts}
+                isLoading={catalogueProductsQuery.isLoading}
+                loadError={catalogueProductsQuery.error}
+                onRetryProducts={() => catalogueProductsQuery.refetch()}
+                productId={catalogueProductId}
+                quantity={catalogueQuantity}
+                instructions={catalogueInstructions}
+                errors={{ product: errors.product, quantity: errors.quantity, quote: errors.quote }}
+                quote={catalogueQuoteQuery.data ?? null}
+                quoteLoading={catalogueQuoteQuery.isFetching}
+                quoteError={catalogueQuoteQuery.error}
+                onRetryQuote={() => catalogueQuoteQuery.refetch()}
+                onProductChange={changeCatalogueProduct}
+                onQuantityChange={(value) => {
+                  setCatalogueQuantity(value);
+                  setErrors((prev) => ({ ...prev, quantity: undefined, quote: undefined }));
+                }}
+                onInstructionsChange={setCatalogueInstructions}
+              />
+            )}
+
             <Card>
               <CardHeader>
-                <StepTitle step={1}>Add your files</StepTitle>
+                <StepTitle step={isCatalogue ? 2 : 1}>
+                  {isCatalogue ? "Upload your source file" : "Add your files"}
+                </StepTitle>
                 <CardDescription>
-                  Word, Excel, PowerPoint, PDF, photos and text files all work.
-                  Anything that needs converting, we convert for you.
+                  {isCatalogue
+                    ? "Upload one photo or source file. The shop turns it into the finished layout for this service."
+                    : "Word, Excel, PowerPoint, PDF, photos and text files all work. Anything that needs converting, we convert for you."}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -650,10 +832,16 @@ export default function NewOrderPage({
                   />
                   <span className="text-sm font-medium">
                     {dragging
-                      ? "Drop to add files"
+                      ? isCatalogue
+                        ? "Drop your source file"
+                        : "Drop to add files"
                       : files.length > 0
-                        ? "Add more files"
-                        : "Drop your files here, or click to choose"}
+                        ? isCatalogue
+                          ? "Choose a different source file"
+                          : "Add more files"
+                        : isCatalogue
+                          ? "Drop one source file here, or click to choose"
+                          : "Drop your files here, or click to choose"}
                   </span>
                   <span className="mt-0.5 text-xs text-muted-foreground">
                     PDF, JPG, PNG, WEBP, DOCX, XLSX, PPTX, TXT, MD, CSV
@@ -662,7 +850,7 @@ export default function NewOrderPage({
                   <input
                     id="file-upload"
                     type="file"
-                    multiple
+                    multiple={!isCatalogue}
                     accept={ACCEPTED_TYPES}
                     onChange={onFileChange}
                     aria-invalid={!!errors.files}
@@ -707,6 +895,7 @@ export default function NewOrderPage({
                           : FileText;
                         // Only trust a page count that belongs to this exact file.
                         const pages =
+                          !isCatalogue &&
                           estimate?.files.length === files.length &&
                           estimate.files[idx]?.name === f.name
                             ? estimate.files[idx].page_count
@@ -734,9 +923,11 @@ export default function NewOrderPage({
                                     className="h-3 w-3 shrink-0"
                                     aria-hidden="true"
                                   />
-                                  {printReady
-                                    ? "Ready to print"
-                                    : "We'll convert this to PDF for you"}
+                                  {isCatalogue
+                                    ? "Source uploaded — the shop prepares the layout"
+                                    : printReady
+                                      ? "Ready to print"
+                                      : "We'll convert this to PDF for you"}
                                 </p>
                               </div>
                             </div>
@@ -783,6 +974,7 @@ export default function NewOrderPage({
               </CardContent>
             </Card>
 
+            {!isCatalogue && (
             <Card>
               <CardHeader>
                 <StepTitle step={2}>Print settings</StepTitle>
@@ -938,6 +1130,7 @@ export default function NewOrderPage({
                 </div>
               </CardContent>
             </Card>
+            )}
 
             {adminMode && (
               <Card>
@@ -1093,9 +1286,13 @@ export default function NewOrderPage({
                     </dd>
                   </div>
                   <div className="flex justify-between gap-4">
-                    <dt className="text-muted-foreground">Print</dt>
+                    <dt className="text-muted-foreground">{isCatalogue ? "Service" : "Print"}</dt>
                     <dd className="text-right font-medium">
-                      {colorModeLabel(spec.color_mode)} · {paperTypeLabel(spec.media_type)}
+                      {isCatalogue
+                        ? selectedProduct
+                          ? `${selectedProduct.name} · ${catalogueQuantity || "—"} ${selectedProduct.unit_label}s`
+                          : "Not selected yet"
+                        : `${colorModeLabel(spec.color_mode)} · ${paperTypeLabel(spec.media_type)}`}
                     </dd>
                   </div>
                   <div className="flex justify-between gap-4">
@@ -1111,7 +1308,7 @@ export default function NewOrderPage({
                 <Separator />
 
                 {/* Live estimated total before the order is placed (PRD FR-16). */}
-                {estimating || quoteQuery.isFetching ? (
+                {quotePending ? (
                   <p
                     className="flex items-center gap-2 text-sm text-muted-foreground"
                     aria-live="polite"
@@ -1120,23 +1317,31 @@ export default function NewOrderPage({
                       className="h-4 w-4 animate-spin"
                       aria-hidden="true"
                     />
-                    {estimating ? "Counting your pages…" : "Updating price…"}
+                    {isCatalogue ? "Updating fixed price…" : estimating ? "Counting your pages…" : "Updating price…"}
                   </p>
                 ) : quote ? (
                   <div className="rounded-lg border bg-card px-4 py-3 shadow-sm space-y-2">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-xs text-muted-foreground">Estimated total</p>
+                        <p className="text-xs text-muted-foreground">
+                          {isCatalogue ? "Fixed total" : "Estimated total"}
+                        </p>
                         <p className="text-2xl font-bold">
                           ₱{quote.subtotal_peso.toFixed(2)}
                         </p>
                       </div>
                       <p className="text-right text-xs text-muted-foreground">
-                        {totalPages} {plural(totalPages, "page", "pages")} ×{" "}
-                        {spec.copies} {plural(Number(spec.copies), "copy", "copies")}
-                        <br />
-                        {colorModeLabel(spec.color_mode)} ·{" "}
-                        {spec.sides === "none" ? "one side" : "both sides"}
+                        {isCatalogue
+                          ? selectedProduct
+                            ? `${catalogueQuantity || "—"} ${selectedProduct.unit_label}s × ${formatPeso(selectedProduct.price_peso)}`
+                            : "Choose a service"
+                          : <>
+                              {totalPages} {plural(totalPages, "page", "pages")} ×{" "}
+                              {spec.copies} {plural(Number(spec.copies), "copy", "copies")}
+                              <br />
+                              {colorModeLabel(spec.color_mode)} ·{" "}
+                              {spec.sides === "none" ? "one side" : "both sides"}
+                            </>}
                       </p>
                     </div>
                     <QuoteBreakdown lines={quote.lines} className="pt-1" />
@@ -1146,6 +1351,12 @@ export default function NewOrderPage({
                       </p>
                     )}
                   </div>
+                ) : isCatalogue ? (
+                  <p className="text-sm text-muted-foreground">
+                    {catalogueQuoteQuery.isError
+                      ? "We couldn't load the fixed price. Try again in the service card before placing the order."
+                      : "Choose a service and valid quantity to see your fixed price."}
+                  </p>
                 ) : files.length > 0 ? (
                   <p className="text-sm text-muted-foreground">
                     We couldn&apos;t preview the price just now. You can still

@@ -43,6 +43,7 @@ printingService/
 ├── backend/               # Django REST API
 │   ├── apps/
 │   │   ├── accounts/      # User management & auth
+│   │   ├── catalogue/     # Fixed-price products & admin management
 │   │   ├── orders/        # Order workflow & files
 │   │   ├── payments/      # PayMongo integration
 │   │   ├── pricing/       # Quotation engine
@@ -147,6 +148,8 @@ npm run dev
 - Django Admin: http://127.0.0.1:8000/admin
 - Quick-print wizard (what the counter QR code opens): http://localhost:5173/q
 - Admin pricing page: http://localhost:5173/admin/pricing
+- Admin catalogue: http://localhost:5173/admin/catalogue
+- Catalogue ordering: http://localhost:5173/order?mode=catalogue
 - Staff accounts (add an approver who can approve orders): http://localhost:5173/admin/users
 
 ---
@@ -180,6 +183,12 @@ environment. Edit them at runtime from **Admin → Pricing** (`/admin/pricing`):
   subtotal (default `50`).
 - **Fallback price per side** — charged when no rule matches (default `500`
   centavos / ₱5.00).
+
+Catalogue products are separate from these per-side rules. Shop admins manage their
+fixed unit prices, quantity limits, print defaults, and instructions at
+**Admin → Catalogue** (`/admin/catalogue`). Catalogue orders snapshot those values
+at creation, so later product edits or archival never reprice existing orders.
+Catalogue quantity means finished pieces; Epson `copies` is always forced to `1`.
 
 The `MIN_PARTIAL_PERCENT` and `DUPLEX_DISCOUNT_FACTOR` environment variables
 are **only read once**, by migration `pricing.0002`, to seed the singleton row
@@ -221,8 +230,9 @@ python manage.py migrate
 
 This creates tables for:
 - Users & authentication
+- Catalogue products and the non-overwriting 2x2 ID Picture seed
 - Pricing rules
-- Orders, files, specifications
+- Orders, files, specifications, and catalogue snapshots
 - Payments
 - Print jobs
 - Admin logs
@@ -257,6 +267,18 @@ python manage.py seed_demo
 |------|-------|----------|
 | Admin | `admin@print.local` | `admin1234` |
 | Client | `client@example.com` | `client1234` |
+
+### Catalogue Product Seed
+
+Migrations automatically create the featured **2x2 ID Picture** catalogue product
+at **₱30.00 per piece** with quantity bounds **1–99**. The seed uses `get_or_create`
+by slug (`2x2-id-picture`) and never overwrites an existing admin-edited product.
+No extra seed command is required after `python manage.py migrate`.
+
+Manage or archive products from **Admin → Catalogue**. Archiving deactivates a
+product for new orders but preserves historical order snapshots. A catalogue order
+cannot be approved until staff upload the shop-prepared layout through **Upload
+prepared layout** on its source file.
 
 ### Customize Seed Data
 
@@ -301,8 +323,14 @@ python manage.py sync_print_jobs
 # Create a superuser (alternative to seed_demo)
 python manage.py createsuperuser
 
-# Run tests
+# Check model/migration drift
+python manage.py makemigrations --check --dry-run
+
+# Run backend tests
 python manage.py test
+
+# Run frontend tests (from the repository root)
+npm --prefix frontend test
 ```
 
 ### Build for Production
@@ -589,6 +617,21 @@ DATABASES = {
 
 Add `psycopg2-binary` to `requirements.txt`.
 
+### Catalogue Migration and Deployment Order
+
+Apply backend migrations before deploying the frontend so the catalogue endpoints
+and order snapshot fields are available:
+
+```bash
+cd backend
+python manage.py migrate
+python manage.py check
+```
+
+After deployment, verify that `2x2-id-picture` exists, is active and featured, and
+that only shop admins can access `/admin/catalogue` and the admin catalogue APIs.
+Then build and deploy the frontend with `npm --prefix frontend run build`.
+
 ### Static Files
 
 ```bash
@@ -620,6 +663,9 @@ FRONTEND_URL=https://yourdomain.com
 | Email not sending | Verify SMTP settings or check console output |
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` |
 | `npm install` fails | Delete `node_modules` and `package-lock.json`, retry |
+| Catalogue approval returns `409` | Upload the shop-prepared layout through **Upload prepared layout** on every catalogue source file |
+| Catalogue quantity update returns `409` | Only shop admins can change unpaid catalogue quantities in draft, awaiting-payment, pending-review, or revision-requested states |
+| Featured products do not appear | Confirm the product is active and featured at `/admin/catalogue`; public endpoints hide archived products |
 
 ### Reset Database
 
@@ -652,11 +698,19 @@ curl http://localhost:5173
 | POST | `/api/accounts/refresh/` | Refresh access token |
 | GET | `/api/accounts/me/` | Get profile |
 
+### Catalogue
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/catalogue/products/` | List active products; supports search, category, featured, and pagination |
+| GET | `/api/catalogue/products/{slug}/` | Active product detail |
+| GET/POST | `/api/admin/catalogue/products/` | List all products / create product (shop admin) |
+| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Detail / update / archive (shop admin) |
+
 ### Orders
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/orders/` | Create order (multipart) |
-| POST | `/api/orders/quote/` | Price a quote without creating an order |
+| POST | `/api/orders/quote/` | Price custom files or a catalogue product + quantity without creating an order |
 | POST | `/api/orders/estimate/` | Count pages of an upload (no order created) |
 | GET | `/api/orders/mine/` | List my orders |
 | GET | `/api/orders/{id}/` | Order detail |
@@ -731,6 +785,7 @@ The application includes a built-in admin panel for managing API integrations:
 |--------|----------|-------------|
 | GET | `/api/admin/orders/` | List orders (filter by status) |
 | GET | `/api/admin/orders/{id}/` | Order detail |
+| PATCH | `/api/admin/orders/{id}/product/` | Adjust unpaid pre-approval catalogue quantity (shop admin) |
 | POST | `/api/admin/orders/{id}/actions/{action}/` | Perform action |
 | POST | `/api/admin/print-jobs/` | Sync printer statuses |
 

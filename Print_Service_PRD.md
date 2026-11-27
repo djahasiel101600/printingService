@@ -1,6 +1,6 @@
 # Project Requirements Document: On-Demand Print Service Web Application
 
-**Status:** Draft v0.1
+**Status:** v1.1 — Admin-managed catalogue services
 **Date:** September 5, 2026
 **Platform:** Web Application
 **Core Integrations:** Epson Connect API v2.0 (printing) · PayMongo API (QR Ph payments)
@@ -23,6 +23,7 @@ Ordinary customers who want something printed (documents, photos, school require
 - **Guided simplicity** — Printing parameters (paper size, paper type, color, sides, quality, copies) are optional, sensible defaults are pre-selected, and the client can rely on free-text instructions instead.
 - **Quality control** — No file reaches the physical printer without human admin review and approval, reducing misprints and wasted materials.
 - **Revenue assurance** — Require at least a partial payment via QR Ph before a job is queued, reducing no-shows and unclaimed print-outs.
+- **Catalogue flexibility** — Let shop admins offer fixed-price services such as 2x2 ID pictures without changing the per-side pricing rules used for custom documents.
 - **Traceability** — Every accepted job receives a unique tracking identifier so clients (even guests) can check status without creating an account.
 - **Lean scope** — Provide only the editing tools needed to prepare a file for print (crop, split, resize, center). This is not a design or desktop-publishing tool.
 
@@ -39,7 +40,8 @@ Ordinary customers who want something printed (documents, photos, school require
 ### 2.1 In Scope (v1 / MVP)
 
 - Guest and registered-account submission flow.
-- Multi-file upload (PDF and common image formats).
+- Multi-file upload (PDF and common image formats) for custom printing.
+- Admin-managed catalogue services with fixed unit prices, quantity limits, featured products, and one uploaded source file per catalogue order.
 - Guided print-specification form mapped to Epson Connect API parameters, plus a free-text instructions field.
 - Basic pre-print editing: crop, split PDF pages, resize, and center/align on the print canvas.
 - Automatic price computation (quotation engine) based on selected parameters and page/quantity count.
@@ -52,6 +54,8 @@ Ordinary customers who want something printed (documents, photos, school require
 ### 2.2 Out of Scope (v1)
 
 - Advanced graphic design / desktop-publishing features (layering, filters, in-file text editing, template design).
+- Automatic 2x2 photo composition, cropping, passport-photo validation, or template generation; catalogue layouts are prepared manually by shop staff.
+- Shopping carts, multiple catalogue products per order, and multi-file catalogue requests in v1.
 - Support for printer brands/APIs other than Epson Connect.
 - Multi-branch / multi-location printer routing (single shop / small fixed pool of printers assumed for v1).
 - Delivery/courier logistics (v1 assumes client pickup after printing, referencing the tracking ID).
@@ -69,6 +73,8 @@ Ordinary customers who want something printed (documents, photos, school require
 | Registered Client | Created an account (email/password or social login). | All guest permissions, plus saved order history, saved contact/billing details, faster re-orders. |
 | Admin / Staff | Operates the print shop side of the platform. | Review submitted jobs, approve/reject/request revision, adjust job parameters, view payment status, push approved jobs to the printer, update order status, manage pricing rules. |
 | Super Admin (optional) | Owner/manager level. | All admin permissions, plus manage pricing table, manage staff accounts, manage connected printers, view reports. |
+
+Shop admins manage the catalogue. Approvers can review and act on orders but cannot create, edit, feature, archive, or reprice catalogue products.
 
 ---
 
@@ -90,6 +96,8 @@ The admin approval step sits **after payment is secured but before the job is re
 8. Confirmation & tracking ID — on successful payment, the system generates a unique order/tracking identifier and shows a confirmation screen and (for guests) a reminder of how to check status later (tracking ID + contact info).
 9. Status tracking — client can check the order status at any time (Submitted, Pending Review, Approved/In Queue, Printing, Printed – Ready for Pickup, On Hold, Rejected, Cancelled) using the tracking ID.
 
+**Catalogue alternative:** From `/order?mode=catalogue`, the client chooses one active catalogue service, enters the number of finished pieces, uploads exactly one source file, and sees the fixed server-calculated total before submitting. Page counts and per-side controls are not used for catalogue pricing. The same flow is available to shop admins when creating an order for a registered customer or walk-in.
+
 ### 4.2 Admin-Side Flow
 
 1. New paid submissions appear in an Admin Review Queue, sorted by submission time / due date.
@@ -98,6 +106,8 @@ The admin approval step sits **after payment is secured but before the job is re
 4. On approval, the system submits the print job to the target Epson printer through the Epson Connect API (file upload + print settings + execute print).
 5. Admin monitors job/device status (printing, completed, error) and updates the order status accordingly; marks the order Printed – Ready for Pickup once physical output is confirmed.
 6. If partial payment was used, admin can mark the balance as collected on pickup (cash/QR Ph) to close the order.
+7. For a catalogue order, staff must upload the shop-prepared layout through **Upload prepared layout** on the source file before approval. A raw photo, printer-compatible upload, or automatically generated final file is not sufficient.
+8. Shop admins manage products at `/admin/catalogue`, including fixed peso prices, quantity bounds, print defaults, instructions, featured status, and archival. Existing orders retain their creation-time snapshots.
 
 ---
 
@@ -236,7 +246,8 @@ For partial payments, the Payment Intent amount is set to the partial amount; a 
 ## 9. Key Data Entities (High-Level)
 
 - **User** — `id`, `role` (guest/client/admin), `name`, `email`, `phone`, `facebook_handle`, `password_hash` (if registered), `created_at`.
-- **Order** — `id`, `tracking_id`, `user_id` (nullable for guest + guest contact snapshot), `status`, `subtotal`, `amount_paid`, `balance_due`, `payment_type` (full/partial), `admin_notes`, `created_at`, `approved_at`, `completed_at`.
+- **Order** — `id`, `tracking_id`, `user_id` (nullable for guest + guest contact snapshot), `status`, `subtotal`, `amount_paid`, `balance_due`, `payment_type` (full/partial), `admin_notes`, `created_at`, `approved_at`, `completed_at`. Catalogue orders also store `catalogue_product`, `product_name_snapshot`, `product_unit_price_snapshot`, `product_unit_label_snapshot`, `product_instructions_snapshot`, `product_min_quantity_snapshot`, `product_max_quantity_snapshot`, and `product_quantity`.
+- **CatalogueProduct** — `id`, unique immutable `slug`, `name`, `description`, `category`, `price` (centavos), `unit_label`, `min_quantity`, nullable `max_quantity`, `is_active`, `is_featured`, `display_order`, `default_spec`, customer/staff `instructions`, `created_at`, `updated_at`.
 - **OrderFile** — `id`, `order_id`, `original_file_url`, `edited_file_url`, `file_type`, `page_count`, `edit_actions` (crop/split/resize/center metadata).
 - **PrintSpecification** — `id`, `order_file_id` (or `order_id` if applied to all), `media_size`, `media_type`, `color_mode`, `sides`, `print_quality`, `copies`, `borderless`, `source`, `free_text_instructions`.
 - **Payment** — `id`, `order_id`, `paymongo_payment_intent_id`, `amount`, `method` (qrph), `status`, `paid_at`, `refund_status`.
@@ -265,3 +276,40 @@ For partial payments, the Payment Intent amount is set to the partial amount; a 
 - Should rejected/cancelled paid orders be refunded automatically via PayMongo's Refunds API, or handled manually at first?
 - Do guest orders need any additional identity verification beyond tracking ID + contact match, to prevent someone else from viewing or claiming a client's order?
 - Is pickup the only fulfillment method for v1, or should delivery be considered sooner?
+
+---
+
+## 12. Admin-Managed Printing Catalogue
+
+### 12.1 Product and pricing rules
+
+- **FR-35:** Shop admins can list, search, filter, create, edit, feature, reactivate, and archive catalogue products. Approvers and customers cannot manage products.
+- **FR-36:** Public catalogue endpoints return active products only, with search, category, featured, and pagination support. Inactive product detail returns 404.
+- **FR-37:** Product prices are positive integer centavos. Admin peso input is converted exactly without floating-point rounding and rejects more than two decimal places.
+- **FR-38:** Quantity bounds are positive and ordered. `default_spec` accepts existing print-spec fields and Epson vocabulary; catalogue orders always force Epson `copies=1` because finished-piece quantity is separate from printer copies.
+- **FR-39:** A non-overwriting data migration seeds `2x2 ID Picture` (`2x2-id-picture`) at ₱30.00 per piece, quantity 1–99, active and featured, with A4 photo-paper color/high-quality/single-sided/portrait defaults and one Epson copy. Existing admin-edited products are never overwritten.
+
+### 12.2 Catalogue ordering and historical integrity
+
+- **FR-40:** A catalogue order contains one product and exactly one uploaded source file. The server resolves an active product, validates quantity, merges product defaults with submitted settings, and forces Epson `copies=1`.
+- **FR-41:** Product name, unit price, unit label, instructions, and quantity bounds are snapshotted at creation. Product edits, archival, file changes, page selection, color analysis, and specification changes never reprice an existing catalogue order.
+- **FR-42:** Catalogue quote lines use `kind="catalogue"` with quantity, unit label, unit price, and amount; page/copy/side/color values are null. Existing custom quote lines remain `kind="custom"` and retain per-side calculations. Missing catalogue snapshots fail closed rather than falling back to custom pricing.
+- **FR-43:** Guest, registered-customer, and admin-created catalogue orders use the existing payment, review, tracking, and notification lifecycle.
+
+### 12.3 Staff quantity changes and approval safeguard
+
+- **FR-44:** `PATCH /api/admin/orders/{id}/product/` is shop-admin-only and catalogue-only. It is allowed only for `draft`, `awaiting payment`, `pending review`, or `revision requested` orders with `amount_paid=0`; invalid quantities return 400 and unsafe state changes return 409.
+- **FR-45:** Quantity changes validate against snapshotted bounds and reprice from the snapshotted unit price. They clear prepared output and page selection, reset `replaced_by_admin`, and add unchanged-status history and activity entries.
+- **FR-46:** Approval is blocked with HTTP 409 unless every catalogue source file has `replaced_by_admin=True` and a non-empty `final_file`. The guard runs before automatic preparation, changes no status, creates no print job, and logs no successful approval. Customer re-upload clears preparation state and reactivates the guard.
+
+### 12.4 Catalogue API summary
+
+| Method | Endpoint | Access | Purpose |
+|---|---|---|---|
+| GET | `/api/catalogue/products/` | Public | Active products with search/category/featured/pagination |
+| GET | `/api/catalogue/products/{slug}/` | Public | Active product detail |
+| GET/POST | `/api/admin/catalogue/products/` | Shop admin | List all products / create product |
+| GET/PATCH/DELETE | `/api/admin/catalogue/products/{id}/` | Shop admin | Detail / update / archive |
+| POST | `/api/orders/quote/` | Public | Quote custom files or catalogue product + quantity |
+| POST | `/api/orders/` | Public/account/admin | Create custom or catalogue order |
+| PATCH | `/api/admin/orders/{id}/product/` | Shop admin | Adjust unpaid pre-approval catalogue quantity |

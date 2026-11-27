@@ -33,6 +33,9 @@ export default function FileReviewCard({
   const queryClient = useQueryClient();
   const [pages, setPages] = useState<number[]>(file.selected_pages);
   const replaceInput = useRef<HTMLInputElement>(null);
+  const isCatalogue = order.order_mode === "catalogue";
+  const needsPreparedLayout =
+    isCatalogue && (!file.replaced_by_admin || !file.final_file);
 
   // Keep local state aligned when the server order is refetched.
   if (pages.join() !== file.selected_pages.join()) {
@@ -62,7 +65,11 @@ export default function FileReviewCard({
       return data;
     },
     onSuccess: () => {
-      toast.success(`${file.file_name} replaced with the converted file.`);
+      toast.success(
+        isCatalogue
+          ? `${file.file_name} replaced with the shop-prepared layout.`
+          : `${file.file_name} replaced with the converted file.`,
+      );
       queryClient.invalidateQueries({ queryKey: ["admin-order", String(order.id)] });
       queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
     },
@@ -208,11 +215,12 @@ return (
           <Button variant="outline" size="sm" onClick={() => onPreview(file)}>
             <Eye className="mr-2 h-4 w-4" /> Preview
           </Button>
-          {!file.print_ready && (
+          {(!file.print_ready || isCatalogue) && (
             <Button variant="outline" size="sm"
               onClick={() => replaceInput.current?.click()}
               disabled={replaceMutation.isPending}>
-              <FileUp className="mr-2 h-4 w-4" /> Upload PDF
+              <FileUp className="mr-2 h-4 w-4" />
+              {isCatalogue ? "Upload prepared layout" : "Upload PDF"}
             </Button>
           )}
           <input ref={replaceInput} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
@@ -225,7 +233,16 @@ return (
       </div>
 
       <div className="space-y-3 p-3">
-        {!file.print_ready && (
+        {needsPreparedLayout ? (
+          <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Catalogue orders require a shop-prepared layout. Upload the finished product
+              layout through <strong>Upload prepared layout</strong> before
+              approving; a printer-compatible raw upload or automatic conversion is not enough.
+            </span>
+          </p>
+        ) : !file.print_ready && (
           <p className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
@@ -236,15 +253,17 @@ return (
           </p>
         )}
 
-        {file.rendered_by_admin && (
+        {file.rendered_by_admin && !isCatalogue && (
           <p className="text-xs text-emerald-700">
             This document was rendered into a printable PDF here (text layout on the sheet).
           </p>
         )}
 
-        {file.replaced_by_admin && (
+        {file.replaced_by_admin && !needsPreparedLayout && (
           <p className="text-xs text-emerald-700">
-            The shop replaced the original upload with this converted file.
+            {isCatalogue
+              ? "Shop-prepared layout uploaded. This file can now be approved."
+              : "The shop replaced the original upload with this converted file."}
           </p>
         )}
 

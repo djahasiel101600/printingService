@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "corsheaders",
     # local
     "apps.accounts",
+    "apps.catalogue",
     "apps.pricing",
     "apps.orders",
     "apps.payments",

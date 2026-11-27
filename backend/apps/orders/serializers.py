@@ -167,6 +167,7 @@ class OrderSerializer(serializers.ModelSerializer):
     history = StatusHistorySerializer(many=True, read_only=True)
     payments = OrderPaymentSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    order_mode = serializers.CharField(read_only=True)
     client_name = serializers.CharField(source="client_display_name", read_only=True)
     # NOTE: must be a SerializerMethodField — a plain read-only FloatField would
     # look up `Order.subtotal_peso`, which does not exist, and DRF would then
@@ -178,13 +179,16 @@ class OrderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ["id", "tracking_id", "status", "status_display", "payment_type",
+        fields = ["id", "tracking_id", "status", "status_display", "order_mode", "payment_type",
                   "payment_method", "client_name", "guest_name", "guest_contact_method",
                   "guest_contact_value", "subtotal", "subtotal_peso", "quote_breakdown",
                   "min_partial_peso",
                   "amount_paid", "amount_paid_peso",
                   "balance_due", "balance_due_peso", "admin_notes", "revision_note",
-                  "reprint_count",
+                  "reprint_count", "catalogue_product", "product_name_snapshot",
+                  "product_unit_price_snapshot", "product_unit_label_snapshot",
+                  "product_instructions_snapshot", "product_min_quantity_snapshot",
+                  "product_max_quantity_snapshot", "product_quantity",
                   "files", "history", "payments", "created_at", "approved_at", "completed_at"]
         read_only_fields = fields
 

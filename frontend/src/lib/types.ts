@@ -168,9 +168,61 @@ export interface PrintJob {
   created_at: string;
 }
 
+export type OrderMode = "custom" | "catalogue";
+
+export type CatalogueDefaultSpec = Partial<
+  Omit<PrintSpecification, "id" | "order_file" | "free_text_instructions">
+>;
+
+/** A fixed-price service managed by the shop. Prices are stored in centavos. */
+export interface CatalogueProduct {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  price_peso: number;
+  unit_label: string;
+  min_quantity: number;
+  max_quantity: number | null;
+  is_active: boolean;
+  is_featured: boolean;
+  display_order: number;
+  default_spec: CatalogueDefaultSpec;
+  instructions: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Mutable fields accepted by the admin catalogue create/update endpoints. */
+export interface CatalogueProductPayload {
+  name: string;
+  description: string;
+  category: string;
+  price: number;
+  unit_label: string;
+  min_quantity: number;
+  max_quantity: number | null;
+  is_active: boolean;
+  is_featured: boolean;
+  display_order: number;
+  default_spec: CatalogueDefaultSpec;
+  instructions: string;
+}
+
 export interface Order {
   id: number;
   tracking_id: string;
+  order_mode: OrderMode;
+  catalogue_product: number | null;
+  product_name_snapshot: string | null;
+  product_unit_price_snapshot: number | null;
+  product_unit_label_snapshot: string | null;
+  product_instructions_snapshot: string | null;
+  product_min_quantity_snapshot: number | null;
+  product_max_quantity_snapshot: number | null;
+  product_quantity: number | null;
   status: OrderStatus;
   status_display: string;
   payment_type: string;
@@ -201,14 +253,19 @@ export interface Order {
 
 export interface QuoteLine {
   label: string;
-  color_mode: PageColorMode;
-  pages: number;
-  copies: number;
+  /** Optional for historical custom quote snapshots saved before catalogue mode. */
+  kind?: "custom" | "catalogue";
+  color_mode: PageColorMode | null;
+  pages: number | null;
+  copies: number | null;
   unit_price: number;
   unit_price_peso: number;
-  sides: number;
+  sides: number | null;
   amount: number;
   amount_peso: number;
+  quantity?: number | null;
+  unit_label?: string | null;
+  product_id?: number | null;
 }
 
 export interface Quote {

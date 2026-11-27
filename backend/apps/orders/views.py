@@ -1,8 +1,10 @@
 import json
 import math
+from types import SimpleNamespace
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.http import FileResponse
@@ -13,6 +15,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+from apps.catalogue.services import (
+    active_product_or_404, combined_instructions, effective_product_spec, quote_active_product,
+)
+from apps.catalogue.validators import validate_quantity
 from apps.pricing.models import PricingSettings
 from apps.pricing.quotation import compute_quote, line_quote_data
 from apps.pricing.views import IsShopAdmin, IsShopStaff
@@ -91,6 +97,23 @@ class OrderCreateView(APIView):
         if not files:
             return Response({"detail": "At least one file is required."}, status=400)
 
+        order_mode = str(request.data.get("order_mode") or "custom").lower()
+        if order_mode not in {"custom", "catalogue"}:
+            return Response({"detail": "order_mode must be 'custom' or 'catalogue'."}, status=400)
+        is_catalogue = order_mode == "catalogue"
+        product = None
+        product_quantity = None
+        if is_catalogue:
+            if len(files) != 1:
+                return Response({"detail": "Catalogue orders require exactly one source file."}, status=400)
+            try:
+                product = active_product_or_404(request.data.get("product_id"))
+                product_quantity = validate_quantity(product, request.data.get("product_quantity"))
+            except DjangoValidationError as exc:
+                return Response({"detail": exc.messages[0]}, status=400)
+        elif request.data.get("product_id") is not None or request.data.get("product_quantity") is not None:
+            return Response({"detail": "Catalogue fields require order_mode='catalogue'."}, status=400)
+
         user = request.user if request.user.is_authenticated else None
         is_admin = bool(user and user.is_shop_admin)
         customer_user_id = request.data.get("customer_user_id")
@@ -119,17 +142,32 @@ class OrderCreateView(APIView):
         try:
             spec_data = _parse_spec(request.data)
             per_file = json.loads(request.data.get("per_file_specs", "[]"))
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             return Response({"detail": str(exc)}, status=400)
+        if not isinstance(per_file, list):
+            return Response({"detail": "per_file_specs must be an array."}, status=400)
 
         spec_serializer = PrintSpecificationSerializer(data=spec_data)
         spec_serializer.is_valid(raise_exception=True)
         spec_defaults = spec_serializer.validated_data
 
+        catalogue_data = {}
+        if product is not None:
+            catalogue_data = {
+                "catalogue_product": product,
+                "product_name_snapshot": product.name,
+                "product_unit_price_snapshot": product.price,
+                "product_unit_label_snapshot": product.unit_label,
+                "product_instructions_snapshot": product.instructions,
+                "product_min_quantity_snapshot": product.min_quantity,
+                "product_max_quantity_snapshot": product.max_quantity,
+                "product_quantity": product_quantity,
+            }
         order = Order.objects.create(
             user=order_user,
             status=Order.Status.DRAFT,
             **guest_data,
+            **catalogue_data,
         )
 
         errors = []
@@ -169,7 +207,9 @@ class OrderCreateView(APIView):
             order_file.file.close()
             per_file_spec = (per_file[index]
                              if index < len(per_file) and isinstance(per_file[index], dict) else {})
-            media_size = per_file_spec.get("media_size") or spec_defaults.get("media_size") or "ps_a4"
+            default_media_size = product.default_spec.get("media_size", "ps_a4") if product else "ps_a4"
+            media_size = (per_file_spec.get("media_size") or spec_defaults.get("media_size")
+                          or default_media_size)
             try:
                 # Documents are counted as the laid-out pages the shop would
                 # actually print (services/document_render.py), so page
@@ -183,8 +223,17 @@ class OrderCreateView(APIView):
             file_spec = dict(spec_defaults)
             if index < len(per_file) and isinstance(per_file[index], dict):
                 file_spec_serializer = PrintSpecificationSerializer(data=per_file[index])
-                if file_spec_serializer.is_valid():
+                if is_catalogue:
+                    file_spec_serializer.is_valid(raise_exception=True)
                     file_spec = {**file_spec, **file_spec_serializer.validated_data}
+                elif file_spec_serializer.is_valid():
+                    file_spec = {**file_spec, **file_spec_serializer.validated_data}
+            if product is not None:
+                submitted_instructions = file_spec.pop("free_text_instructions", "")
+                file_spec = effective_product_spec(product, file_spec)
+                file_spec["free_text_instructions"] = combined_instructions(
+                    product, submitted_instructions,
+                )
             PrintSpecification.objects.create(
                 order=order, order_file=order_file,
                 free_text_instructions=file_spec.get("free_text_instructions", ""),
@@ -210,6 +259,18 @@ class QuoteView(APIView):
 
     def post(self, request):
         body = request.data if isinstance(request.data, dict) else {}
+        order_mode = str(body.get("order_mode") or "custom").lower()
+        if order_mode not in {"custom", "catalogue"}:
+            return Response({"detail": "order_mode must be 'custom' or 'catalogue'."}, status=400)
+        if order_mode == "catalogue":
+            try:
+                quote = quote_active_product(body.get("product_id"), body.get("product_quantity"))
+            except DjangoValidationError as exc:
+                errors = exc.message_dict if hasattr(exc, "message_dict") else {"detail": exc.messages}
+                return Response(errors, status=400)
+            return Response(_quote_response(quote))
+        if body.get("product_id") is not None or body.get("product_quantity") is not None:
+            return Response({"detail": "Catalogue fields require order_mode='catalogue'."}, status=400)
         specs = body.get("files") or [{
             "page_count": body.get("page_count", 1),
             **{k: body.get(k) for k in ("media_size", "media_type", "color_mode",
@@ -380,6 +441,10 @@ class OrderFileEditView(APIView):
             apply_edit(order_file, action, params)
         except FileEditError as exc:
             return Response({"detail": str(exc)}, status=400)
+        if order.catalogue_product_id:
+            order_file.replaced_by_admin = False
+            order_file.rendered_by_admin = False
+            order_file.save(update_fields=["replaced_by_admin", "rendered_by_admin"])
 
         ensure_order_file_analysis(order_file)
         reprice_order(order)
@@ -674,6 +739,17 @@ class AdminOrderActionView(APIView):
                 status=403,
             )
 
+        if action == "approve" and order.catalogue_product_id:
+            source_files = list(order.files.all())
+            if not source_files or any(
+                not source.replaced_by_admin or not source.final_file for source in source_files
+            ):
+                return Response({"detail": (
+                    "Upload the shop-prepared layout through Replace file before approving "
+                    "this catalogue order. Automatic preparation of the raw customer file "
+                    "is not allowed."
+                )}, status=409)
+
         log_activity(
             request.user, f"order.{action}", object_type="order",
             object_repr=order.tracking_id, object_id=order.pk,
@@ -911,6 +987,7 @@ class OrderFileReuploadView(APIView):
             # for the old bytes; the new version needs a fresh review.
             order_file.page_selection = []
             order_file.replaced_by_admin = False
+            order_file.rendered_by_admin = False
             order_file.current_version += 1
             order_file.save()
 
@@ -970,6 +1047,8 @@ class AdminOrderSpecView(APIView):
         spec = get_object_or_404(PrintSpecification, pk=spec_pk, order=order)
         serializer = PrintSpecificationSerializer(spec, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        if order.catalogue_product_id:
+            serializer.validated_data["copies"] = 1
         serializer.save()
         if spec.order_file:
             try:
@@ -1029,6 +1108,62 @@ class AdminOrderFileColorView(APIView):
             "order": AdminOrderSerializer(order).data,
             "file": OrderFileSerializer(order_file).data,
         })
+
+
+class AdminOrderProductView(APIView):
+    """Adjust an unpaid catalogue order's quantity from its price snapshot."""
+
+    permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
+
+    def patch(self, request, pk):
+        order = get_object_or_404(Order, pk=pk)
+        if not order.catalogue_product_id:
+            return Response({"detail": "Quantity adjustment is only available for catalogue orders."}, status=409)
+        if order.status not in {
+            Order.Status.DRAFT, Order.Status.AWAITING_PAYMENT, Order.Status.PENDING_REVIEW,
+            Order.Status.REVISION_REQUESTED,
+        }:
+            return Response({"detail": "This order's status no longer allows quantity changes."}, status=409)
+        if order.amount_paid != 0:
+            return Response({"detail": "Paid orders cannot change catalogue quantity."}, status=409)
+        if order.product_min_quantity_snapshot is None:
+            return Response({"detail": "This order's catalogue quantity snapshot is incomplete."}, status=409)
+
+        bounds = SimpleNamespace(
+            min_quantity=order.product_min_quantity_snapshot,
+            max_quantity=order.product_max_quantity_snapshot,
+        )
+        try:
+            quantity = validate_quantity(bounds, request.data.get("product_quantity"))
+        except DjangoValidationError as exc:
+            return Response({"product_quantity": exc.messages}, status=400)
+
+        old_quantity = order.product_quantity
+        old_subtotal = order.subtotal
+        with transaction.atomic():
+            for order_file in order.files.all():
+                order_file.page_selection = []
+                if order_file.final_file:
+                    order_file.final_file.delete(save=False)
+                    order_file.final_file = None
+                order_file.replaced_by_admin = False
+                order_file.save(update_fields=["page_selection", "final_file", "replaced_by_admin"])
+            order.product_quantity = quantity
+            order.save(update_fields=["product_quantity", "updated_at"])
+            reprice_order(order)
+            detail = (
+                f"Quantity {old_quantity} -> {quantity} {order.product_unit_label_snapshot}; "
+                f"subtotal {old_subtotal / 100:.2f} -> {order.subtotal / 100:.2f} PHP."
+            )
+            OrderStatusHistory.objects.create(
+                order=order, from_status=order.status, to_status=order.status,
+                note=detail, actor=request.user,
+            )
+            log_activity(
+                request.user, "order.product_quantity", object_type="order",
+                object_repr=order.tracking_id, object_id=order.pk, detail=detail,
+            )
+        return Response(AdminOrderSerializer(order).data)
 
 
 class AdminOrderNotesView(APIView):
