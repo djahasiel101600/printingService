@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   ClipboardList,
+  ContactRound,
   Store,
   FilePlus2,
   FileText,
@@ -99,6 +100,12 @@ const STAFF_NAV: NavItem[] = [
     to: "/admin/settings",
     label: "API settings",
     icon: Settings,
+    show: (u) => !!u?.is_shop_admin,
+  },
+  {
+    to: "/admin/customers",
+    label: "Customers",
+    icon: ContactRound,
     show: (u) => !!u?.is_shop_admin,
   },
   {

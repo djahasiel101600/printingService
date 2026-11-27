@@ -426,6 +426,39 @@ class OrderFlowRegressionTests(TestCase):
         self.assertEqual(qr.status_code, 201, qr.content)
         self.assertEqual(qr.json()["method"], "qrph")
 
+        # Turning it back on immediately re-enables pickup for a new order.
+        enabled = admin.put("/api/payments/settings/", {"allow_pay_on_pickup": True}, format="json")
+        self.assertEqual(enabled.status_code, 200, enabled.content)
+        self.assertTrue(enabled.json()["allow_pay_on_pickup"])
+        second = self._create_guest_order()
+        allowed = self.client_api.post("/api/payments/checkout/", {
+            "order_id": second["order"]["id"], "method": "pickup",
+        }, format="json")
+        self.assertEqual(allowed.status_code, 201, allowed.content)
+        self.assertEqual(Order.objects.get(pk=second["order"]["id"]).status,
+                         Order.Status.PENDING_REVIEW)
+
+    def test_payment_settings_reject_non_admin_and_non_boolean_values(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        approver = User.objects.create(
+            username="settings-approver@example.com", email="settings-approver@example.com",
+            role=User.Role.APPROVER,
+        )
+        approver_client = APIClient()
+        approver_client.force_authenticate(user=approver)
+        denied = approver_client.put("/api/payments/settings/", {
+            "allow_pay_on_pickup": False,
+        }, format="json")
+        self.assertEqual(denied.status_code, 403)
+
+        invalid = self._admin_client().put("/api/payments/settings/", {
+            "allow_pay_on_pickup": "false",
+        }, format="json")
+        self.assertEqual(invalid.status_code, 400)
+
     def test_record_payment_closes_out_pickup_order(self):
         payload = self._create_guest_order()
         order_id = payload["order"]["id"]

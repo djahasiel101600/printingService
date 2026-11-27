@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Max, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
 from rest_framework.response import Response
@@ -11,6 +12,7 @@ from apps.activitylog.services import log_activity
 from apps.pricing.views import IsShopAdmin
 
 from .serializers import (
+    CustomerSerializer,
     EmailTokenObtainPairSerializer,
     MeSerializer,
     RegisterSerializer,
@@ -89,29 +91,49 @@ class MeView(APIView):
 
 
 class AdminCustomersView(APIView):
-    """Admin typeahead: registered customers an order can be linked to when
-    creating an order on the customer's behalf."""
+    """Owner-only registered-customer lookup and directory.
+
+    The legacy list response remains available for the order-creation typeahead.
+    Passing ``page`` opts into the paginated directory response.
+    """
 
     permission_classes = [permissions.IsAuthenticated, IsShopAdmin]
 
     def get(self, request):
         search = request.query_params.get("search", "").strip()
-        customers = User.objects.filter(role=User.Role.CLIENT)
+        customers = User.objects.filter(role=User.Role.CLIENT).annotate(
+            order_count=Count("orders"),
+            last_order_at=Max("orders__created_at"),
+        )
         if search:
             customers = customers.filter(
                 Q(email__icontains=search) | Q(first_name__icontains=search)
                 | Q(last_name__icontains=search) | Q(phone__icontains=search)
+                | Q(facebook_handle__icontains=search)
             )
-        return Response([
-            {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "phone": user.phone,
-            }
-            for user in customers[:20]
-        ])
+
+        if "page" in request.query_params:
+            try:
+                page_size = max(1, min(int(request.query_params.get("page_size", 25)), 100))
+            except (TypeError, ValueError):
+                page_size = 25
+            try:
+                page_number = max(1, int(request.query_params.get("page", 1)))
+            except (TypeError, ValueError):
+                page_number = 1
+            paginator = Paginator(customers.order_by("-date_joined", "-id"), page_size)
+            page = paginator.get_page(page_number)
+            return Response({
+                "page": page.number,
+                "page_size": page_size,
+                "count": page.paginator.count,
+                "num_pages": page.paginator.num_pages,
+                "has_next": page.has_next(),
+                "has_previous": page.has_previous(),
+                "results": CustomerSerializer(page.object_list, many=True).data,
+            })
+
+        return Response(CustomerSerializer(customers.order_by("email")[:20], many=True).data)
 
 
 class AdminStaffView(APIView):

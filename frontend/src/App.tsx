@@ -17,6 +17,7 @@ import OrderDetailPage from "@/pages/OrderDetailPage";
 import AdminOrdersPage from "@/pages/AdminOrdersPage";
 import AdminOrderDetailPage from "@/pages/AdminOrderDetailPage";
 import AdminSettingsPage from "@/pages/AdminSettingsPage";
+import AdminCustomersPage from "@/pages/AdminCustomersPage";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import AdminPricingPage from "@/pages/AdminPricingPage";
 import AdminCataloguePage from "@/pages/AdminCataloguePage";
@@ -87,6 +88,15 @@ export default function App() {
                 element={
                   <RequireAuth adminOnly>
                     <AdminSalesPage />
+                  </RequireAuth>
+                }
+              />
+              {/* Registered customer directory: owner-only. */}
+              <Route
+                path="/admin/customers"
+                element={
+                  <RequireAuth adminOnly>
+                    <AdminCustomersPage />
                   </RequireAuth>
                 }
               />

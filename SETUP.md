@@ -750,7 +750,9 @@ curl http://localhost:5173
 ### Payments
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/payments/checkout/` | Create QR Ph checkout |
+| POST | `/api/payments/checkout/` | Create QR Ph checkout or select pay upon pickup when enabled |
+| GET | `/api/payments/settings/` | Read checkout options (public) |
+| PUT | `/api/payments/settings/` | Update checkout options (shop admin only) |
 | POST | `/api/payments/webhook/` | PayMongo webhook |
 
 ### Pricing
@@ -768,12 +770,25 @@ curl http://localhost:5173
 
 The application includes a built-in admin panel for managing API integrations:
 
-- **URL**: `/admin/settings` (requires staff login)
-- **Features**: 
+- **URL**: `/admin/settings` (requires shop-admin login; approvers cannot access it)
+- **Features**:
   - Test Epson connection with live/mock mode toggle
   - Test PayMongo connection with live/mock mode toggle
+  - Turn **Pay upon pickup** ON or OFF without disabling QR Ph
   - Real-time test results with detailed error messages
   - Setup instructions for both services
+
+### Registered customer directory
+
+- **URL**: `/admin/customers` (shop admin only)
+- Every account created through `/register` appears automatically.
+- Search by name, email, phone number, or Facebook handle; browse pages of customers.
+- The directory shows contact details, account status, signup date, last sign-in, order count, and last order date.
+- Guest checkout contact details remain on their orders and do not create customer accounts.
+
+### Pay upon pickup behavior
+
+When **Allow "Pay upon pickup"** is ON, customers can choose it in the regular checkout and Quick Print flows. The order moves directly to `pending review` with no online payment created, and staff can record the collected balance from the admin order page. When OFF, the option is hidden and the backend rejects pickup checkout requests; QR Ph full and partial payments remain available.
 
 ### Epson OAuth Endpoints
 
@@ -814,6 +829,7 @@ The application includes a built-in admin panel for managing API integrations:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/admin/orders/` | List orders (filter by status) |
+| GET | `/api/admin/customers/` | Search registered customers; pass `page` for the paginated directory (shop admin) |
 | GET | `/api/admin/orders/{id}/` | Order detail |
 | PATCH | `/api/admin/orders/{id}/product/` | Adjust unpaid pre-approval catalogue quantity (shop admin) |
 | POST | `/api/admin/orders/{id}/actions/{action}/` | Perform action |

@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer as BaseTokenObtainPairSerializer
 
@@ -55,6 +56,21 @@ class MeSerializer(serializers.ModelSerializer):
         fields = ["id", "email", "first_name", "last_name", "phone", "facebook_handle", "role",
                   "is_shop_admin", "is_approver", "can_review_orders"]
         read_only_fields = ["id", "role", "is_shop_admin", "is_approver", "can_review_orders"]
+
+
+class CustomerSerializer(serializers.ModelSerializer):
+    """Registered customer details for the owner-only customer directory."""
+
+    order_count = serializers.IntegerField(read_only=True)
+    last_order_at = serializers.DateTimeField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id", "email", "first_name", "last_name", "phone", "facebook_handle",
+            "is_active", "date_joined", "last_login", "order_count", "last_order_at",
+        ]
+        read_only_fields = fields
 
 
 # Roles the shop owner may hand out from user management. Clients self-register
@@ -139,5 +155,7 @@ class EmailTokenObtainPairSerializer(BaseTokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=["last_login"])
         data["user"] = MeSerializer(self.user).data
         return data

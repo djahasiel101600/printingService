@@ -514,3 +514,22 @@ export interface CustomerOption {
   last_name: string;
   phone: string;
 }
+
+export interface CustomerRecord extends CustomerOption {
+  facebook_handle: string;
+  is_active: boolean;
+  date_joined: string;
+  last_login: string | null;
+  order_count: number;
+  last_order_at: string | null;
+}
+
+export interface CustomerDirectoryPage {
+  page: number;
+  page_size: number;
+  count: number;
+  num_pages: number;
+  has_next: boolean;
+  has_previous: boolean;
+  results: CustomerRecord[];
+}

@@ -88,6 +88,17 @@ export default function QuickPrintPage() {
   });
   const allowPickup = settingsQuery.data?.allow_pay_on_pickup ?? false;
 
+  // A settings refetch can disable pickup after the customer selected it.
+  // Clear that stale choice and return them to the payment step before an
+  // order is created; the server remains the final authority at checkout.
+  useEffect(() => {
+    if (settingsQuery.isSuccess && !allowPickup && paymentChoice === "pickup") {
+      setPaymentChoice(null);
+      if (step === 5) setStep(4);
+      toast.error("Pay upon pickup is no longer available. Choose another payment method.");
+    }
+  }, [allowPickup, paymentChoice, settingsQuery.isSuccess, step]);
+
   const sizes = capabilities?.paperSizes ?? [];
   const currentSize = sizes.find((s) => s.paperSize === spec.media_size) ?? sizes[0];
   const currentType =
@@ -184,6 +195,15 @@ export default function QuickPrintPage() {
    * which has its own retry-payment path.
    */
   async function placeOrder() {
+    if (paymentChoice === "pickup") {
+      const latestSettings = await settingsQuery.refetch();
+      if (latestSettings.isError || !latestSettings.data?.allow_pay_on_pickup) {
+        setPaymentChoice(null);
+        setStep(4);
+        toast.error("Pay upon pickup is no longer available. Choose another payment method.");
+        return;
+      }
+    }
     let order: Order;
     try {
       order = await createMutation.mutateAsync();
@@ -275,7 +295,9 @@ export default function QuickPrintPage() {
     if (step === 3 && !user) {
       return Boolean(guestName.trim() && guestValue.trim());
     }
-    if (step === 4) return paymentChoice !== null;
+    if (step === 4) {
+      return paymentChoice !== null && (paymentChoice !== "pickup" || allowPickup);
+    }
     return true;
   }
 

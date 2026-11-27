@@ -80,7 +80,7 @@ Shop admins manage the catalogue. Approvers can review and act on orders but can
 
 ## 4. End-to-End User Flow
 
-The admin approval step sits **after payment is secured but before the job is released to the physical printer** — so payment is not lost while still protecting the printer from unreviewed jobs.
+The admin approval step sits **after online payment is secured, or after the customer selects the enabled pay-upon-pickup option, but before the job is released to the physical printer** — so unpaid pickup work remains visible while still protecting the printer from unreviewed jobs.
 
 ### 4.1 Client-Side Flow
 
@@ -92,20 +92,20 @@ The admin approval step sits **after payment is secured but before the job is re
    - (a) fills out simple guided fields — paper size, paper type, color or black-and-white, number of copies, single/double-sided, print quality — all optional with system defaults pre-filled; and/or
    - (b) writes free-text instructions describing the request in plain language, as if speaking to a person behind a counter.
 6. Quotation — system calculates an estimated price from page count, copies, paper size/type, and color mode, and displays it before checkout.
-7. Payment — client pays via PayMongo QR Ph, choosing full payment or a partial/down payment (a configurable minimum percentage). Checkout cannot proceed if neither option is completed.
-8. Confirmation & tracking ID — on successful payment, the system generates a unique order/tracking identifier and shows a confirmation screen and (for guests) a reminder of how to check status later (tracking ID + contact info).
+7. Payment — client pays via PayMongo QR Ph, choosing full payment or a partial/down payment (a configurable minimum percentage), or selects **Pay upon pickup** when the shop has enabled it. Checkout cannot proceed without a valid payment selection.
+8. Confirmation & tracking ID — after order submission and successful online payment, or after pay-upon-pickup selection, the system shows the order/tracking identifier and a confirmation screen; guests also receive a reminder of how to check status later (tracking ID + contact info).
 9. Status tracking — client can check the order status at any time (Submitted, Pending Review, Approved/In Queue, Printing, Printed – Ready for Pickup, On Hold, Rejected, Cancelled) using the tracking ID.
 
 **Catalogue alternative:** From `/order?mode=catalogue`, the client chooses one active catalogue service, enters the number of finished pieces, uploads exactly one source file, and sees the fixed server-calculated total before submitting. Page counts and per-side controls are not used for catalogue pricing. The same flow is available to shop admins when creating an order for a registered customer or walk-in.
 
 ### 4.2 Admin-Side Flow
 
-1. New paid submissions appear in an Admin Review Queue, sorted by submission time / due date.
+1. New paid submissions and orders using the enabled pay-upon-pickup option appear in an Admin Review Queue, sorted by submission time / due date.
 2. Admin opens a job to view: uploaded/edited files, client-selected parameters, free-text instructions, computed price, and payment status (full or partial).
 3. Admin can adjust or correct print parameters if the client's request is ambiguous, add internal notes, and then Approve, Reject (with reason, triggering refund/communication workflow), or Request Revision (sends the job back to the client with comments).
 4. On approval, the system submits the print job to the target Epson printer through the Epson Connect API (file upload + print settings + execute print).
 5. Admin monitors job/device status (printing, completed, error) and updates the order status accordingly; marks the order Printed – Ready for Pickup once physical output is confirmed.
-6. If partial payment was used, admin can mark the balance as collected on pickup (cash/QR Ph) to close the order.
+6. For partial-payment or pay-upon-pickup orders, admin can record the balance collected at the shop to close the amount due.
 7. For a catalogue order, staff must upload the shop-prepared layout through **Upload prepared layout** on the source file before approval. A raw photo, printer-compatible upload, or automatically generated final file is not sufficient.
 8. Shop admins manage products at `/admin/catalogue`, including fixed peso prices, quantity bounds, print defaults, instructions, featured status, and archival. Existing orders retain their creation-time snapshots.
 
@@ -118,7 +118,7 @@ The admin approval step sits **after payment is secured but before the job is re
 - **FR-1:** Users can register with email/password (and optionally social login) or continue as a guest.
 - **FR-2:** Guest checkout requires: full name, contact number, and at least one of {email, Facebook Messenger handle/link}.
 - **FR-3:** Guest orders are retrievable using tracking ID + the contact info supplied at submission (as a lightweight verification step).
-- **FR-4:** Registered clients get an order history dashboard and can reuse previously saved contact/billing details.
+- **FR-4:** Registered clients get an order history dashboard and can reuse previously saved contact/billing details. Shop admins have an owner-only customer directory at `/admin/customers` showing signup/contact details, account status, sign-in information, order counts, and last-order information; guest checkout details are not registered accounts.
 
 ### 5.2 File Upload & Basic Editing
 
@@ -146,18 +146,18 @@ The admin approval step sits **after payment is secured but before the job is re
 - **FR-16:** Price is recalculated live as the client changes parameters, files, or page ranges.
 - **FR-17:** Admin can override the computed price on a specific order (e.g., for a custom job described only in free text) before it is sent for payment, or at review time if payment covers a manual quote workflow.
 
-### 5.5 Payment (PayMongo – QR Ph)
+### 5.5 Payment (PayMongo QR Ph and Pay upon pickup)
 
-- **FR-18:** Client must choose full payment or partial/down payment (minimum percentage configurable by admin, e.g. 50%) before an order can be submitted.
-- **FR-19:** Checkout is blocked (cannot proceed to submission) unless one of the two payment options is completed successfully.
+- **FR-18:** Client must choose QR Ph full payment, QR Ph partial/down payment (minimum percentage configurable by admin, e.g. 50%), or pay upon pickup when that option is enabled by the shop admin at `/admin/settings`.
+- **FR-19:** Checkout is blocked unless a valid payment option is selected. Disabled pay-upon-pickup requests are rejected by the backend even if a stale client attempts them; QR Ph remains available.
 - **FR-20:** Payment is processed through PayMongo's Payment Intent workflow with QR Ph as the enabled payment method; the dynamic QR code (single-use, amount-encoded, ~30 minute expiry) is displayed to the client at checkout.
 - **FR-21:** Payment confirmation is received via PayMongo webhook (`payment.paid`) and reflected on the order automatically; `qrph.expired` and `payment.failed` are handled with a retry option.
-- **FR-22:** For partial payments, the system tracks amount paid vs. balance due, and supports a follow-up payment (e.g., on pickup) to close out the balance.
+- **FR-22:** For partial payments and pay-upon-pickup orders, the system tracks amount paid vs. balance due. Pickup selection creates no online payment and moves the order to pending review; staff can later record the cash collected at pickup to close the balance.
 - **FR-23:** Refunds (e.g., on admin rejection) are recorded and, where supported by PayMongo, processed via the Refunds API; otherwise flagged for manual refund handling.
 
 ### 5.6 Admin Review & Approval
 
-- **FR-24:** All paid orders enter a review queue and cannot be sent to the printer until explicitly approved by an admin.
+- **FR-24:** All paid orders and pay-upon-pickup orders enter a review queue and cannot be sent to the printer until explicitly approved by an admin.
 - **FR-25:** Admin can Approve, Reject (with reason), or Request Revision (returns the order to the client with comments, order re-enters an editable state).
 - **FR-26:** Admin can adjust print parameters before approval (e.g., correcting a paper size the client left ambiguous) and can leave internal notes.
 - **FR-27:** Admin dashboard shows, per order: files (with preview), client-selected parameters, free-text instructions, computed price, payment status, and client contact info.

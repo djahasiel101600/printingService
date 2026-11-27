@@ -99,8 +99,9 @@ export default function AdminSettingsPage() {
   const paymentSettingsMutation = useMutation({
     mutationFn: async (allowPayOnPickup: boolean) =>
       (await api.put<ShopPaymentSettings>("/payments/settings/", { allow_pay_on_pickup: allowPayOnPickup })).data,
-    onSuccess: () => {
+    onSuccess: (updated) => {
       toast.success("Payment option updated.");
+      queryClient.setQueryData(["payment-settings"], updated);
       queryClient.invalidateQueries({ queryKey: ["payment-settings"] });
     },
     onError: (err) => toast.error(apiErrorMessage(err)),
@@ -323,13 +324,14 @@ export default function AdminSettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between rounded-md border p-3">
             <div>
-              <Label className="text-base">Allow "Pay upon pickup"</Label>
+              <Label htmlFor="allow-pay-on-pickup" className="text-base">Allow "Pay upon pickup"</Label>
               <p className="text-sm text-muted-foreground">
                 Let customers skip online payment and pay the balance when they collect their printout.
                 QR Ph remains available either way.
               </p>
             </div>
             <Switch
+              id="allow-pay-on-pickup"
               checked={paymentSettings?.allow_pay_on_pickup ?? false}
               onCheckedChange={(checked) => paymentSettingsMutation.mutate(checked)}
               disabled={paymentSettingsLoading || paymentSettingsMutation.isPending || !paymentSettings}

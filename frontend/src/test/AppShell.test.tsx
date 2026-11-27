@@ -57,6 +57,7 @@ describe("AppShell navigation by role", () => {
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /staff/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /customers/i })).not.toBeInTheDocument();
   });
 
   it("hides staff links from a plain customer account", () => {
@@ -68,6 +69,7 @@ describe("AppShell navigation by role", () => {
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /staff/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /customers/i })).not.toBeInTheDocument();
   });
 
   it("gives an approver the review queue but not pricing or staff management", () => {
@@ -82,6 +84,7 @@ describe("AppShell navigation by role", () => {
     expect(screen.queryByRole("link", { name: /catalogue/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /pricing/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /^staff$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /customers/i })).not.toBeInTheDocument();
   });
 
   it("gives a shop admin every staff destination", async () => {
@@ -100,6 +103,7 @@ describe("AppShell navigation by role", () => {
     expect(screen.getByRole("menuitem", { name: /pricing/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /catalogue/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /^staff$/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /customers/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /api settings/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /create order for customer/i })).toBeInTheDocument();
   });
@@ -156,6 +160,7 @@ describe("AppShell mobile navigation", () => {
     expect(within(drawer).getByRole("link", { name: /review queue/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /pricing/i })).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /catalogue/i })).toBeInTheDocument();
+    expect(within(drawer).getByRole("link", { name: /customers/i })).toBeInTheDocument();
   });
 
   it("closes the drawer on Escape", async () => {
