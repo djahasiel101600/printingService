@@ -5,13 +5,19 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Check,
+  ChevronDown,
+  Circle,
   Eye,
   FileImage,
   FileText,
   Loader2,
+  RotateCcw,
   Search,
+  SlidersHorizontal,
+  Sparkles,
   Trash2,
   Upload,
+  UserCheck,
   X,
 } from "lucide-react";
 
@@ -37,7 +43,13 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth";
 import { api, apiErrorMessage, saveGuestOrder } from "@/lib/api";
-import { formatBytes } from "@/lib/constants";
+import {
+  formatBytes,
+  paperSizeLabel,
+  paperTypeLabel,
+  qualityLabel,
+  sidesLabel,
+} from "@/lib/constants";
 import type {
   Capabilities,
   CustomerOption,
@@ -46,7 +58,10 @@ import type {
   PrintSpecification,
   Quote,
 } from "@/lib/types";
-import SpecFields, { DEFAULT_SPEC } from "@/components/SpecFields";
+import SpecFields, {
+  ADVANCED_SPEC_KEYS,
+  DEFAULT_SPEC,
+} from "@/components/SpecFields";
 import { cn } from "@/lib/utils";
 
 export type GuestMethod = "email" | "phone" | "facebook";
@@ -86,6 +101,7 @@ const customerName = (c: CustomerOption) =>
   c.first_name || c.last_name
     ? `${c.first_name} ${c.last_name}`.trim()
     : c.email;
+const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /** Waits for typing to pause so the customer search doesn't fire on every keystroke. */
 function useDebounced<T>(value: T, delay = 250) {
@@ -253,6 +269,8 @@ export default function NewOrderPage({
     url: string;
   } | null>(null);
   const [spec, setSpec] = useState<PrintSpecification>(DEFAULT_SPEC);
+  /** Print settings are tucked away for customers (we pick sensible ones); staff see them open. */
+  const [showSettings, setShowSettings] = useState(adminMode);
   const [guestName, setGuestName] = useState("");
   const [guestMethod, setGuestMethod] = useState<GuestMethod>("email");
   const [guestValue, setGuestValue] = useState("");
@@ -450,8 +468,8 @@ export default function NewOrderPage({
     }
     if (rejected.length > 0) {
       toast.error(
-        `${rejected.length === 1 ? rejected[0] : `${rejected.length} files`} can't be printed. ` +
-          "Accepted: PDF, JPG, PNG, WEBP, DOCX, XLSX, PPTX, TXT, MD, CSV.",
+        `${rejected.length === 1 ? rejected[0] : `${rejected.length} files`} can't be printed here yet. ` +
+          "Try saving it as a PDF first. We accept PDF, JPG, PNG, WEBP, DOCX, XLSX, PPTX, TXT, MD and CSV.",
       );
     }
     if (duplicates > 0) {
@@ -531,11 +549,34 @@ export default function NewOrderPage({
   const customerStep = 3;
   const guestStep = adminMode ? 4 : 3;
 
-  // What's still missing, shown beside the submit button so it never feels like a surprise.
-  const missing: string[] = [];
-  if (files.length === 0) missing.push("at least one file");
-  if (needsGuestDetails && (!guestName.trim() || !guestValue.trim()))
-    missing.push("contact details");
+  // ---------------------------------------------------------- plain language
+  /** Only the advanced fields: a changed color or paper type is a normal choice, not a "custom" state. */
+  const advancedChanged = ADVANCED_SPEC_KEYS.some((k) => spec[k] !== DEFAULT_SPEC[k]);
+  const advancedSummary = [
+    paperSizeLabel(spec.media_size),
+    sidesLabel(spec.sides),
+    `${spec.copies} ${plural(Number(spec.copies), "copy", "copies")}`,
+    qualityLabel(spec.print_quality),
+  ].join(" · ");
+  function resetAdvanced() {
+    setSpec((prev) => {
+      const next = { ...prev };
+      for (const k of ADVANCED_SPEC_KEYS) {
+        (next as Record<string, unknown>)[k] = DEFAULT_SPEC[k];
+      }
+      return next;
+    });
+  }
+
+  // What's still missing, shown as a checklist so the person always knows what's left.
+  const contactDone = !needsGuestDetails || (!!guestName.trim() && !!guestValue.trim());
+  const checklist = [
+    { label: "Add your files", done: files.length > 0 },
+    ...(needsGuestDetails
+      ? [{ label: "Tell us how to reach you", done: contactDone }]
+      : []),
+  ];
+  const readyToOrder = checklist.every((c) => c.done);
 
   const forWhom = adminMode
     ? selectedCustomer
@@ -545,29 +586,47 @@ export default function NewOrderPage({
       ? user.first_name || user.email
       : guestName.trim() || "Not set yet";
 
+  const estimating = estimateMutation.isPending;
+  const totalPages = estimate?.total_pages ?? 0;
+
   return (
     <>
       <form onSubmit={onSubmit} noValidate className="space-y-6">
-        <div>
+        <div className="space-y-3">
           <h1 className="text-2xl font-bold">
-            {adminMode ? "New order for a customer" : "New print order"}
+            {adminMode ? "New order for a customer" : "What would you like to print?"}
           </h1>
           <p className="max-w-2xl text-muted-foreground">
             {adminMode
               ? "Create an order on behalf of a customer. It will appear in Admin → Orders like any other order."
-              : "Upload your files and choose printing options. A real person reviews every job before it prints."}
+              : "Add your files and we'll take care of the rest. No printer settings to figure out, and a real person reviews every job before it prints."}
           </p>
+          {!adminMode && (
+            <ul className="flex flex-wrap gap-x-6 gap-y-1.5 text-sm text-muted-foreground">
+              <li className="flex items-center gap-1.5">
+                <Upload className="h-4 w-4 text-primary" aria-hidden="true" />
+                Any common file works
+              </li>
+              <li className="flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
+                Settings are chosen for you
+              </li>
+              <li className="flex items-center gap-1.5">
+                <UserCheck className="h-4 w-4 text-primary" aria-hidden="true" />
+                Checked by a person before printing
+              </li>
+            </ul>
+          )}
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <StepTitle step={1}>Files</StepTitle>
+                <StepTitle step={1}>Add your files</StepTitle>
                 <CardDescription>
-                  Upload PDFs, images (JPG/PNG/WEBP) or documents (Word, Excel,
-                  PowerPoint, TXT). You can preview PDFs and images before
-                  ordering.
+                  Word, Excel, PowerPoint, PDF, photos and text files all work.
+                  Anything that needs converting, we convert for you.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -599,7 +658,9 @@ export default function NewOrderPage({
                   <span className="text-sm font-medium">
                     {dragging
                       ? "Drop to add files"
-                      : "Drop files here, or click to browse"}
+                      : files.length > 0
+                        ? "Add more files"
+                        : "Drop your files here, or click to choose"}
                   </span>
                   <span className="mt-0.5 text-xs text-muted-foreground">
                     PDF, JPG, PNG, WEBP, DOCX, XLSX, PPTX, TXT, MD, CSV
@@ -629,8 +690,8 @@ export default function NewOrderPage({
                   <>
                     <div className="flex items-center justify-between text-sm">
                       <p className="text-muted-foreground" aria-live="polite">
-                        {files.length} {files.length === 1 ? "file" : "files"} ·{" "}
-                        {formatBytes(totalBytes)}
+                        {files.length} {plural(files.length, "file", "files")}{" "}
+                        added · {formatBytes(totalBytes)}
                       </p>
                       {files.length > 1 && (
                         <Button
@@ -651,6 +712,12 @@ export default function NewOrderPage({
                         const Icon = IMAGE_TYPES.includes(extension)
                           ? FileImage
                           : FileText;
+                        // Only trust a page count that belongs to this exact file.
+                        const pages =
+                          estimate?.files.length === files.length &&
+                          estimate.files[idx]?.name === f.name
+                            ? estimate.files[idx].page_count
+                            : null;
                         return (
                           <li
                             key={fileKey(f)}
@@ -666,13 +733,18 @@ export default function NewOrderPage({
                                 <p className="text-xs text-muted-foreground">
                                   {extension.toUpperCase()} ·{" "}
                                   {formatBytes(f.size)}
+                                  {pages !== null &&
+                                    ` · ${pages} ${plural(pages, "page", "pages")}`}
                                 </p>
-                                {!printReady && (
-                                  <p className="text-xs text-amber-700 dark:text-amber-400">
-                                    We&apos;ll read this for you, then print it
-                                    as PDF.
-                                  </p>
-                                )}
+                                <p className="flex items-center gap-1 text-xs text-green-700 dark:text-green-400">
+                                  <Check
+                                    className="h-3 w-3 shrink-0"
+                                    aria-hidden="true"
+                                  />
+                                  {printReady
+                                    ? "Ready to print"
+                                    : "We'll convert this to PDF for you"}
+                                </p>
                               </div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
@@ -720,12 +792,14 @@ export default function NewOrderPage({
 
             <Card>
               <CardHeader>
-                <StepTitle step={2}>Print options</StepTitle>
+                <StepTitle step={2}>Print settings</StepTitle>
                 <CardDescription>
-                  Choose how you want your files printed.
+                  {adminMode
+                    ? "Choose how the files should be printed."
+                    : "Just pick color and paper. Everything else is already set for you."}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-5">
                 {capabilitiesQuery.isError && (
                   <div
                     role="alert"
@@ -745,20 +819,130 @@ export default function NewOrderPage({
                     </Button>
                   </div>
                 )}
+
+                {/* The choices that change the price, always in view. */}
                 {capabilitiesQuery.isLoading ? (
                   <div className="space-y-3">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <Skeleton key={i} className="h-10 w-full" />
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-16 w-full" />
                     ))}
                   </div>
                 ) : (
                   <SpecFields
+                    section="basic"
                     capabilities={capabilities}
                     value={spec}
                     onChange={setSpec}
-                    showOrientation={hasImages}
                   />
                 )}
+
+                {/* Price feedback right beside the choices that cause it. */}
+                <div
+                  className="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2.5 text-sm"
+                  aria-live="polite"
+                >
+                  <div>
+                    <p className="font-medium">Estimated total</p>
+                    <p className="text-xs text-muted-foreground">
+                      Color and paper type change the price.
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-right font-semibold">
+                    {files.length === 0 ? (
+                      <span className="text-xs font-normal text-muted-foreground">
+                        Add files to see it
+                      </span>
+                    ) : estimating || quoteQuery.isFetching ? (
+                      <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                        <Loader2
+                          className="h-3.5 w-3.5 animate-spin"
+                          aria-hidden="true"
+                        />
+                        Updating…
+                      </span>
+                    ) : quote ? (
+                      `₱${quote.subtotal_peso.toFixed(2)}`
+                    ) : (
+                      <span className="text-xs font-normal text-muted-foreground">
+                        Not available right now
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <Separator />
+
+                {/* Everything else, one tap away, with a plain summary of what is set. */}
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 text-sm">
+                      <p className="flex items-center gap-1.5 font-medium">
+                        <SlidersHorizontal
+                          className="h-4 w-4 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        Advanced settings
+                        {advancedChanged && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                            Changed
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {advancedChanged
+                          ? advancedSummary
+                          : `Already set: ${advancedSummary}. Most people don't need to change these.`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {advancedChanged && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={resetAdvanced}
+                        >
+                          <RotateCcw
+                            className="mr-1 h-4 w-4"
+                            aria-hidden="true"
+                          />
+                          Reset
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-expanded={showSettings}
+                        aria-controls="print-settings-panel"
+                        onClick={() => setShowSettings((v) => !v)}
+                      >
+                        {showSettings ? "Hide" : "Show"}
+                        <ChevronDown
+                          className={cn(
+                            "ml-1 h-4 w-4 transition-transform",
+                            showSettings && "rotate-180",
+                          )}
+                          aria-hidden="true"
+                        />
+                      </Button>
+                    </div>
+                  </div>
+                  {showSettings && !capabilitiesQuery.isLoading && (
+                    <div
+                      id="print-settings-panel"
+                      className="rounded-md border p-3"
+                    >
+                      <SpecFields
+                        section="advanced"
+                        capabilities={capabilities}
+                        value={spec}
+                        onChange={setSpec}
+                        showOrientation={hasImages}
+                      />
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
@@ -893,7 +1077,7 @@ export default function NewOrderPage({
                 description={
                   adminMode
                     ? "Enter the customer's details so they can track this order. Required unless you selected an account above."
-                    : "So we can send you updates about your order."
+                    : "No account needed. We'll use this to send you updates about your order."
                 }
               />
             )}
@@ -916,6 +1100,13 @@ export default function NewOrderPage({
                     </dd>
                   </div>
                   <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Print</dt>
+                    <dd className="text-right font-medium">
+                      {spec.color_mode === "color" ? "Color" : "Black & white"}{" "}
+                      · {paperTypeLabel(spec.media_type)}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">
                       {adminMode ? "Customer" : "Order for"}
                     </dt>
@@ -927,15 +1118,18 @@ export default function NewOrderPage({
 
                 <Separator />
 
-                {missing.length > 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Still needed: {missing.join(" and ")}.
-                  </p>
-                )}
-
                 {/* Live estimated total before the order is placed (PRD FR-16). */}
-                {quoteQuery.isFetching ? (
-                  <p className="text-sm text-muted-foreground">Updating price…</p>
+                {estimating || quoteQuery.isFetching ? (
+                  <p
+                    className="flex items-center gap-2 text-sm text-muted-foreground"
+                    aria-live="polite"
+                  >
+                    <Loader2
+                      className="h-4 w-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                    {estimating ? "Counting your pages…" : "Updating price…"}
+                  </p>
                 ) : quote ? (
                   <div className="rounded-lg border bg-card px-4 py-3 shadow-sm space-y-2">
                     <div className="flex items-center justify-between gap-3">
@@ -946,11 +1140,11 @@ export default function NewOrderPage({
                         </p>
                       </div>
                       <p className="text-right text-xs text-muted-foreground">
-                        {estimate?.total_pages ?? 0} page{"s"} ×{" "}
-                        {spec.copies} cop{"ies"}
+                        {totalPages} {plural(totalPages, "page", "pages")} ×{" "}
+                        {spec.copies} {plural(Number(spec.copies), "copy", "copies")}
                         <br />
-                        {spec.color_mode === "color" ? "Color" : "Black & white"} ·
-                        {spec.sides === "none" ? "single-sided" : "double-sided"}
+                        {spec.color_mode === "color" ? "Color" : "Black & white"} ·{" "}
+                        {spec.sides === "none" ? "one side" : "both sides"}
                       </p>
                     </div>
                     {quote.min_partial_peso < quote.subtotal_peso && (
@@ -959,11 +1153,41 @@ export default function NewOrderPage({
                       </p>
                     )}
                   </div>
+                ) : files.length > 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    We couldn&apos;t preview the price just now. You can still
+                    place your order.
+                  </p>
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    The price appears here once files and print options are set.
+                    Add a file and your price shows up here.
                   </p>
                 )}
+
+                {/* A checklist replaces "still needed": always clear what is left, never a surprise. */}
+                <ul className="space-y-1.5 text-sm" aria-label="Order checklist">
+                  {checklist.map((item) => (
+                    <li
+                      key={item.label}
+                      className={cn(
+                        "flex items-center gap-2",
+                        item.done
+                          ? "text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {item.done ? (
+                        <Check
+                          className="h-4 w-4 text-green-600"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Circle className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {item.label}
+                    </li>
+                  ))}
+                </ul>
 
                 <div className="space-y-2">
                   <Button
@@ -999,6 +1223,13 @@ export default function NewOrderPage({
                         style={{ width: `${uploadPct}%` }}
                       />
                     </div>
+                  )}
+                  {!adminMode && !isSubmitting && (
+                    <p className="text-center text-xs text-muted-foreground">
+                      {readyToOrder
+                        ? "That's everything. A person will review your files before anything prints."
+                        : "A person reviews every job before it prints."}
+                    </p>
                   )}
                   <Button
                     type="button"
