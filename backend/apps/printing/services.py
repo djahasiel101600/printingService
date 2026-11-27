@@ -102,7 +102,9 @@ def submit_order_to_printer(
             job.status = PrintJob.JobStatus.EXECUTED
             job.submitted_at = timezone.now()
             job.save(update_fields=["epson_job_id", "upload_uri", "status", "submitted_at", "updated_at"])
-        except EpsonError as exc:
+        except Exception as exc:  # noqa: BLE001 - submission failures must not become 500s
+            # Network, storage and malformed provider errors mean this job did
+            # not reach the printer, just like an EpsonError response.
             log.exception("Epson submission failed for order %s", order.tracking_id)
             job.status = PrintJob.JobStatus.FAILED
             job.error_message = str(exc)
@@ -125,7 +127,8 @@ def _safe_printer_name(client: EpsonClient) -> str:
     try:
         info = client.get_device_info()
         return info.get("productName") or "Epson Printer"
-    except EpsonError:
+    except Exception:  # noqa: BLE001 - the name is only a fallback label
+        log.warning("Could not read Epson device info; using fallback printer name", exc_info=True)
         return "Epson Printer"
 
 

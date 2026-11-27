@@ -16,3 +16,4 @@ staticfiles
 .git
 .gitignore
 *.log
+media

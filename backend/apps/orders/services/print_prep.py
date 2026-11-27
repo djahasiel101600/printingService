@@ -310,7 +310,7 @@ def prepare_order_for_print(order, order_files=None) -> list:
         try:
             if rebuild_print_file(order_file):
                 prepared.append(order_file)
-        except (FileEditError, OSError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - preparation is best-effort
             # Never block a release on this: log it, and let the job go out
             # with the best artefact available.
             log.warning(

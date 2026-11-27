@@ -7,13 +7,16 @@ print, and recovers failed or printer-cancelled jobs.
 import io
 import json
 import zipfile
+from unittest.mock import patch
 
+import requests
+from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderFile
 from apps.pricing.models import PriceRule
 
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -142,6 +145,47 @@ class AdminQueueTests(AdminReviewTestCase):
         self.assertEqual(self.act(order, "approve").status_code, 200)
         sync = self.api.post("/api/admin/print-jobs/", {}, format="json")
         self.assertEqual(sync.status_code, 200, sync.content)
+
+    def test_printer_connection_failure_puts_the_order_on_hold(self):
+        order = self.order_with_pdf()
+        self.pay(order)
+        with patch("apps.printing.services.EpsonClient.create_job",
+                   side_effect=requests.ConnectionError("printer offline")):
+            response = self.act(order, "approve")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        saved = Order.objects.get(pk=order["id"])
+        self.assertEqual(saved.status, Order.Status.ON_HOLD)
+        job = saved.print_jobs.get()
+        self.assertEqual(job.status, "failed")
+        self.assertIn("printer offline", job.error_message)
+
+    def test_device_info_failure_uses_the_fallback_printer_name(self):
+        order = self.order_with_pdf()
+        self.pay(order)
+        with patch("apps.printing.services.EpsonClient.get_device_info",
+                   side_effect=requests.ConnectionError("device info unavailable")):
+            response = self.act(order, "approve")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        job = Order.objects.get(pk=order["id"]).print_jobs.get()
+        self.assertEqual(job.printer_name, "Epson Printer")
+        self.assertEqual(job.status, "executed")
+
+    def test_missing_upload_puts_the_order_on_hold_instead_of_500(self):
+        order = self.order_with_pdf()
+        self.pay(order)
+        order_file = OrderFile.objects.get(order_id=order["id"])
+        default_storage.delete(order_file.file.name)
+
+        response = self.act(order, "approve")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        saved = Order.objects.get(pk=order["id"])
+        self.assertEqual(saved.status, Order.Status.ON_HOLD)
+        job = saved.print_jobs.get()
+        self.assertEqual(job.status, "failed")
+        self.assertIn("No such file", job.error_message)
 
     def test_admin_notes_are_saved(self):
         order = self.order_with_pdf()

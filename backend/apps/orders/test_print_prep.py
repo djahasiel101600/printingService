@@ -9,11 +9,13 @@ Covers the three print-preparation guarantees:
    can therefore be prepared and approved like any other upload.
 """
 import io
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image, ImageChops
 from pypdf import PdfReader, PdfWriter
 
+from apps.orders.models import Order
 from apps.orders.services.print_prep import (
     PRINTABLE_MARGIN_MM, fit_image, fit_pdf, print_area_points,
 )
@@ -182,6 +184,17 @@ class PrepareOnApprovalTests(AdminReviewTestCase):
             self.preview_url(order, order["files"][1]["id"], "?variant=final")))
         self.assertAlmostEqual(float(reader.pages[0].mediabox.width), A4_W, delta=1)
         self.assertAlmostEqual(float(reader.pages[0].mediabox.height), A4_H, delta=1)
+
+    def test_unexpected_preparation_failure_does_not_abort_approval(self):
+        order = self.order_with_pdf()
+        self.pay(order)
+        with patch("apps.orders.services.print_prep.rebuild_print_file",
+                   side_effect=RuntimeError("preparation failed")):
+            response = self.act(order, "approve")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        job = Order.objects.get(pk=order["id"]).print_jobs.get()
+        self.assertEqual(job.status, "executed")
 
     def test_borderless_lets_content_reach_the_sheet_edge(self):
         # A4-ratio source (2480×3508 = A4 @300dpi) so the fill reaches all
